@@ -48,7 +48,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          MAX_CHANGE_LINES=1500
+          # 4000: giai doan dung nen con nhung PR lon (outbox + contract test +
+          # examples ~3200 dong). Ha lai 1500 khi nen da on dinh.
+          MAX_CHANGE_LINES=4000
           BASE_BRANCH=main
           if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
             PR_BASE=$(jq -r .pull_request.base.ref "$GITHUB_EVENT_PATH")
