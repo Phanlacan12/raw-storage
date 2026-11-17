@@ -110,7 +110,7 @@ async def read_document(document_id: str, ctx: ReadCtx) -> DocumentResponse:
         ctx.principal, Action.VIEW_METADATA, str(identifier)
     )
     if not decision.allowed:
-        raise PolicyDeniedError(decision.reason or "không có quyền xem tài liệu")
+        raise PolicyDeniedError(decision.reason or "not allowed to view the document")
     document = await ctx.container.ports.catalog.read_document(identifier)
     return DocumentResponse.from_domain(document)
 

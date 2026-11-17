@@ -67,7 +67,7 @@ async def main() -> None:
             """Phát lỗi phụ thuộc một lần rồi hoạt động bình thường."""
             if self.fail_next:
                 self.fail_next = False
-                raise DependencyUnavailableError("catalog", "đăng ký metadata thất bại")
+                raise DependencyUnavailableError("catalog", "metadata registration failed")
             return await super().register_version(version, metadata)
 
     settings = get_settings()
@@ -96,7 +96,7 @@ async def main() -> None:
     builder = CatalogMetadataBuilder()
     principal = Principal(principal_id="example", groups=("document-admins",), is_admin=True)
 
-    heading("1. Đăng ký tài liệu")
+    heading("1. Register a document")
     document = await RegisterDocumentUseCase(ports, builder).execute(
         RegisterDocumentCommand(
             principal=principal,
@@ -105,7 +105,7 @@ async def main() -> None:
     )
     line("document_id", document.document_id)
 
-    heading("2. Upload khi catalog đang lỗi")
+    heading("2. Upload while the catalog is failing")
     payload = b"noi dung can luu"
     request = UploadRequest(
         document_id=document.document_id,
@@ -130,46 +130,46 @@ async def main() -> None:
                 request=request, principal=principal, stream_factory=stream_factory
             )
         )
-        raise AssertionError("đáng ra phải lỗi ở bước đăng ký catalog")
+        raise AssertionError("it should have failed at catalog registration")
     except DependencyUnavailableError as error:
-        line("lỗi trả về cho client", f"503 {error}")
+        line("error returned to the client", f"503 {error}")
 
     intent = await intents.find_by_idempotency_key(request.idempotency_key)
     assert intent is not None
-    line("trạng thái intent", intent.state)
-    line("số lần đã thử", intent.retry_count)
-    check("intent ở RetryPending", intent.state is IntentState.RETRY_PENDING)
+    line("intent state", intent.state)
+    line("attempts", intent.retry_count)
+    check("intent is RetryPending", intent.state is IntentState.RETRY_PENDING)
 
-    heading("3. Hiện trạng sau khi lỗi")
+    heading("3. State after the failure")
     stored_object = await objects.head(StorageUri.parse(intent.payload["storage_uri"]))
-    line("object đã ghi (byte)", stored_object.size_bytes)
-    line("số phiên bản trong catalog", len(await catalog.list_versions(document.document_id)))
-    check("object đã nằm trên storage", stored_object.size_bytes == len(payload))
+    line("object written (bytes)", stored_object.size_bytes)
+    line("versions in the catalog", len(await catalog.list_versions(document.document_id)))
+    check("object is on storage", stored_object.size_bytes == len(payload))
     check(
-        "catalog chưa có phiên bản nào",
+        "catalog has no version yet",
         len(await catalog.list_versions(document.document_id)) == 0,
     )
 
-    heading("4. Job đối soát phục hồi")
+    heading("4. The reconciliation job recovers it")
     saga = UploadSaga(objects, catalog, intents)
     report = await IntentRecoveryJob(intents, saga, catalog, settings).run_once()
-    line("phục hồi được", report.recovered)
-    line("thất bại", report.failed)
+    line("recovered", report.recovered)
+    line("failed", report.failed)
     recovered = await intents.find_by_request_id(intent.request_id)
     assert recovered is not None
-    line("trạng thái intent", recovered.state)
+    line("intent state", recovered.state)
     versions = await catalog.list_versions(document.document_id)
-    line("số phiên bản trong catalog", len(versions))
-    check("intent đã Completed", recovered.state is IntentState.COMPLETED)
-    check("đúng một phiên bản, không nhân đôi", len(versions) == 1)
-    check("giữ nguyên document_version_id", versions[0].version_id == intent.version_id)
+    line("versions in the catalog", len(versions))
+    check("intent is Completed", recovered.state is IntentState.COMPLETED)
+    check("exactly one version, no duplicate", len(versions) == 1)
+    check("document_version_id unchanged", versions[0].version_id == intent.version_id)
 
-    heading("5. Chạy lại job khi không còn gì tồn")
+    heading("5. Re-run the job with nothing left to do")
     again = await IntentRecoveryJob(intents, saga, catalog, settings).run_once()
-    line("phục hồi được", again.recovered)
-    check("không còn intent dở dang", again.recovered == 0 and again.failed == 0)
+    line("recovered", again.recovered)
+    check("no pending intent left", again.recovered == 0 and again.failed == 0)
 
-    print("\nVí dụ 3 hoàn tất.")
+    print("\nExample 3 complete.")
 
 
 if __name__ == "__main__":

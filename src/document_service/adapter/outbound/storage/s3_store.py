@@ -213,5 +213,5 @@ class S3ObjectStoreAdapter(ObjectStorePort, OutboundAdapter):
             raise ClassifiedError(error_class, f"S3 {code}: {error}") from error
         except BotoCoreError as error:
             raise ClassifiedError(
-                ErrorClass.RETRYABLE_TRANSIENT, f"lỗi kết nối S3: {error}"
+                ErrorClass.RETRYABLE_TRANSIENT, f"S3 connection error: {error}"
             ) from error

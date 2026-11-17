@@ -51,7 +51,7 @@ class Deadline:
         """Báo lỗi phụ thuộc không khả dụng nếu đã hết hạn."""
         if self.expired():
             raise DependencyUnavailableError(
-                dependency, f"hết deadline sau {self.elapsed_seconds():.3f}s"
+                dependency, f"deadline exceeded after {self.elapsed_seconds():.3f}s"
             )
 
     def slice_for(self, requested_seconds: float) -> float:

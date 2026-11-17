@@ -25,58 +25,58 @@ async def main() -> None:
         object_store = container.ports.objects
         catalog = container.ports.catalog
 
-        heading("1. Mọi phụ thuộc khỏe")
+        heading("1. All dependencies healthy")
         details = await client.get("/internal/healthz/deps")
         for item in details.json()["dependencies"]:
             line(item["name"], f'{item["status"]} · {item["detail"][:40]}')
         line("service_mode", details.json()["mode"])
-        check("chế độ FULL", details.json()["mode"] == "FULL")
+        check("mode is FULL", details.json()["mode"] == "FULL")
 
-        heading("2. Object Storage sập")
+        heading("2. Object Storage goes down")
         object_store.available = False
         object_store.invalidate_health_cache()
         live = await client.get("/livez")
         ready = await client.get("/readyz")
         line("livez", f"{live.status_code} {live.json()}")
         line("readyz", f"{ready.status_code} {ready.json()}")
-        check("livez vẫn 200", live.status_code == 200)
-        check("readyz báo không sẵn sàng", ready.status_code == 503)
-        check("chế độ NOT_READY", ready.json()["mode"] == "NOT_READY")
+        check("livez still 200", live.status_code == 200)
+        check("readyz reports not ready", ready.status_code == 503)
+        check("mode is NOT_READY", ready.json()["mode"] == "NOT_READY")
 
-        heading("3. API ghi bị chặn đúng cách")
+        heading("3. Write APIs are blocked correctly")
         blocked = await client.post(
             "/api/v1/documents",
             json={"title": "SRS", "document_type": "SRS"},
             headers={"Idempotency-Key": "health-example-0001"},
         )
-        line("mã trả về", blocked.status_code)
+        line("status code", blocked.status_code)
         line("retry-after", blocked.headers.get("retry-after"))
-        line("thông điệp", blocked.json()["message"])
-        check("trả 503 chứ không phải 500", blocked.status_code == 503)
-        check("có header Retry-After", blocked.headers.get("retry-after") is not None)
+        line("message", blocked.json()["message"])
+        check("returns 503, not 500", blocked.status_code == 503)
+        check("Retry-After header present", blocked.headers.get("retry-after") is not None)
 
-        heading("4. Object Storage phục hồi")
+        heading("4. Object Storage recovers")
         object_store.available = True
         object_store.invalidate_health_cache()
         ready = await client.get("/readyz")
         line("readyz", f"{ready.status_code} {ready.json()}")
-        check("trở lại FULL", ready.json()["mode"] == "FULL")
+        check("back to FULL", ready.json()["mode"] == "FULL")
         allowed = await client.post(
             "/api/v1/documents",
             json={"title": "SRS", "document_type": "SRS"},
             headers={"Idempotency-Key": "health-example-0002"},
         )
-        check("API ghi hoạt động lại", allowed.status_code == 201)
+        check("write API works again", allowed.status_code == 201)
 
-        heading("5. Health check của adapter là chỉ-đọc")
+        heading("5. Adapter health checks are read-only")
         before = len(await object_store.list_under_prefix("objects/"))
         result = await catalog.check_health()
         after = len(await object_store.list_under_prefix("objects/"))
         line("catalog health", f"{result.status} · {result.detail}")
-        line("số object trước/sau", f"{before}/{after}")
-        check("health không tạo thêm dữ liệu", before == after)
+        line("objects before/after", f"{before}/{after}")
+        check("health creates no extra data", before == after)
 
-        print("\nVí dụ 4 hoàn tất.")
+        print("\nExample 4 complete.")
 
 
 if __name__ == "__main__":

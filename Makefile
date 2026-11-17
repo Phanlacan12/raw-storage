@@ -25,7 +25,7 @@ venv:
 requirements:
 	uv export --no-hashes --no-dev --no-emit-project --format requirements-txt \
 		-o requirements.lock.txt
-	@echo "Đã ghi requirements.lock.txt (pin tuyệt đối). requirements.txt giữ ràng buộc mềm, sửa tay khi pyproject.toml đổi."
+	@echo "Wrote requirements.lock.txt (fully pinned). requirements.txt keeps the soft constraints; edit it by hand when pyproject.toml changes."
 
 # Tự động định dạng lại code (ghi đè file), giống target `style` của repo mẫu.
 format:

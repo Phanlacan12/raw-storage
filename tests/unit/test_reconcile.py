@@ -170,7 +170,7 @@ class TestIntentRecovery:
         stored = await intents.find_by_request_id(intent.request_id)
         assert stored is not None
         assert stored.state is IntentState.FAILED
-        assert "không thể phục hồi" in stored.last_error
+        assert "cannot recover" in stored.last_error
 
 
 class TestScanners:

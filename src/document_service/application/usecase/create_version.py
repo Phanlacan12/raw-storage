@@ -126,7 +126,7 @@ class CreateVersionUseCase(WriteUseCase[CreateVersionCommand, CreateVersionResul
             intent.register_retry(str(error))
             await self.ports.intents.save(intent)
             _LOGGER.warning(
-                "upload chuyển sang RetryPending",
+                "upload moved to RetryPending",
                 extra={
                     "request_id": str(intent.request_id),
                     "version_id": str(version.version_id),

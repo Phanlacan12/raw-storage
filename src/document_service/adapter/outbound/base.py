@@ -62,10 +62,10 @@ class OutboundAdapter(HealthProbeMixin, ABC):
         """Đọc breaker trước, chỉ gọi phụ thuộc khi breaker không mở."""
         state = self._executor.breaker.state
         if state is BreakerState.OPEN:
-            return self.health_down(f"circuit breaker của {self.dependency_name} đang mở")
+            return self.health_down(f"circuit breaker for {self.dependency_name} is open")
         result = await super().check_health()
         if state is BreakerState.HALF_OPEN and result.healthy:
-            return self.health_degraded("breaker đang nửa mở, phụ thuộc vừa phục hồi")
+            return self.health_degraded("breaker is half-open, dependency has just recovered")
         return result
 
     async def _call(

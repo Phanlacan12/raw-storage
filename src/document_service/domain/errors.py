@@ -49,7 +49,7 @@ class DependencyUnavailableError(DomainError):
         self, dependency: str, message: str = "", retry_after_seconds: float = 1.0
     ) -> None:
         """Ghi lại tên phụ thuộc và khoảng thời gian nên thử lại."""
-        super().__init__(message or f"phụ thuộc {dependency} không khả dụng")
+        super().__init__(message or f"dependency {dependency} is unavailable")
         self.dependency = dependency
         self.retry_after_seconds = retry_after_seconds
 
@@ -59,7 +59,7 @@ class ServiceDegradedError(DomainError):
 
     def __init__(self, mode: str, action: str) -> None:
         """Ghi lại chế độ hiện tại và hành động bị chặn."""
-        super().__init__(f"hành động {action} không khả dụng ở chế độ {mode}")
+        super().__init__(f"action {action} is unavailable in {mode} mode")
         self.mode = mode
         self.action = action
 

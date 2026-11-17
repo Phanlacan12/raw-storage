@@ -34,12 +34,12 @@ jobs:
           set -euo pipefail
           for attempt in $(seq 1 60); do
             if curl -sf http://localhost:8586/healthcheck >/dev/null; then
-              echo "catalog san sang sau $attempt lan thu"
+              echo "catalog became ready after $attempt attempt(s)"
               exit 0
             fi
             sleep 10
           done
-          echo "::error::OpenMetadata khong san sang"
+          echo "::error::OpenMetadata did not become ready"
           exit 1
 
       - name: Run integration tests

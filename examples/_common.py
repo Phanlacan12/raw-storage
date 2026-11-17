@@ -59,7 +59,7 @@ def line(label: str, value: object) -> None:
 
 def check(label: str, condition: bool) -> None:
     """In kết quả kiểm tra và dừng ví dụ nếu sai."""
-    mark = "OK  " if condition else "SAI "
+    mark = "OK  " if condition else "FAIL"
     print(f"  [{mark}] {label}")
     if not condition:
-        raise AssertionError(f"ví dụ thất bại ở bước: {label}")
+        raise AssertionError(f"example failed at step: {label}")

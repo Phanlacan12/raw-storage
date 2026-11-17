@@ -57,7 +57,7 @@ class SqliteRegistryIntentStore(IntentStorePort, OutboundAdapter):
             await self._call(lambda: self._db.execute(_INSERT, self._as_row(intent)))
         except sqlite3.IntegrityError as error:
             raise ConcurrencyConflictError(
-                f"idempotency_key {intent.idempotency_key} đã được dùng"
+                f"idempotency_key {intent.idempotency_key} is already used"
             ) from error
 
     async def advance(self, request_id: RequestId, state: IntentState) -> None:

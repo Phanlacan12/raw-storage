@@ -39,7 +39,7 @@ async def main() -> None:
         (root / "srs.docx").write_bytes(b"SRS ban dau")
         (root / "ghi-chu.tmp").write_bytes(b"file tam, phai bo qua")
 
-        heading("1. Nguồn cần đồng bộ")
+        heading("1. The source to sync")
         for path in sorted(root.iterdir()):
             line(path.name, f"{path.stat().st_size} byte")
 
@@ -59,48 +59,48 @@ async def main() -> None:
             settings,
         )
 
-        heading("2. Lượt đồng bộ đầu")
+        heading("2. First sync run")
         first = await job.run_once()
-        line("file quét được", first.scanned)
-        line("tài liệu đăng ký", first.documents_registered)
-        line("phiên bản tạo mới", first.versions_created)
-        check("bỏ qua file .tmp", first.scanned == 2)
-        check("tạo đủ hai phiên bản", first.versions_created == 2)
+        line("files scanned", first.scanned)
+        line("documents registered", first.documents_registered)
+        line("versions created", first.versions_created)
+        check("skips .tmp files", first.scanned == 2)
+        check("both versions created", first.versions_created == 2)
 
-        heading("3. Lượt thứ hai, nguồn không đổi")
+        heading("3. Second run, source unchanged")
         second = await job.run_once()
-        line("phiên bản tạo mới", second.versions_created)
-        line("file không đổi", second.unchanged)
-        check("không sinh phiên bản rác", second.versions_created == 0)
+        line("versions created", second.versions_created)
+        line("files unchanged", second.unchanged)
+        check("no junk version created", second.versions_created == 0)
 
-        heading("4. Sửa một file ở nguồn")
+        heading("4. Modify one file at the source")
         (root / "srs.docx").write_bytes(b"SRS cap nhat lan 1")
         third = await job.run_once()
-        line("phiên bản tạo mới", third.versions_created)
+        line("versions created", third.versions_created)
         document_id = DocumentId("file-share-srs-docx")
         document = await container.ports.catalog.read_document(document_id)
         for version in document.versions:
             line(f"  {version.label}", f"{version.size_bytes} byte · {version.status}")
-        check("đúng một phiên bản mới", third.versions_created == 1)
-        check("giữ cả hai phiên bản", len(document.versions) == 2)
+        check("exactly one new version", third.versions_created == 1)
+        check("keeps both versions", len(document.versions) == 2)
 
-        heading("5. Quyền của tài liệu đến từ nguồn")
+        heading("5. Document permissions come from the source")
         line("classification", document.access_policy.classification)
         unmapped = SourcePermissionMapper().map(
             SourceSettings(source_id="chua-anh-xa", root_path=str(root))
         )
-        line("nguồn chưa ánh xạ quyền", unmapped.classification)
-        check("nguồn chưa ánh xạ thì hạn chế", unmapped.classification == "restricted")
+        line("source without permission mapping", unmapped.classification)
+        check("unmapped source falls back to restricted", unmapped.classification == "restricted")
 
-        heading("6. Đồng bộ đi qua đường ghi chính")
+        heading("6. Sync goes through the main write path")
         audit = await container.ports.audit.list_for_document(document_id)
         for event in audit:
             line(event.action, f"{event.result} · {event.actor.principal_id}")
         actions = [event.action for event in audit]
-        check("có audit đăng ký tài liệu", "document.registered" in actions)
-        check("có audit tạo phiên bản", actions.count("version.created") == 2)
+        check("audit has document registration", "document.registered" in actions)
+        check("audit has version creation", actions.count("version.created") == 2)
 
-        print("\nVí dụ 5 hoàn tất.")
+        print("\nExample 5 complete.")
 
 
 if __name__ == "__main__":

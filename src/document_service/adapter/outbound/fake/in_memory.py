@@ -91,7 +91,7 @@ class InMemoryAdapter(HealthProbeMixin):
     async def _probe_dependency(self) -> HealthResult:
         """UP khi cờ `available` còn bật, DOWN khi test mô phỏng sự cố."""
         if not self.available:
-            return self.health_down(f"{self._name} giả lập đang DOWN")
+            return self.health_down(f"fake {self._name} is DOWN")
         return self.health_up("in-memory")
 
 
@@ -232,7 +232,7 @@ class InMemoryCatalog(MetadataCatalogPort, InMemoryAdapter):
         """Lấy tài liệu, lỗi nếu chưa đăng ký."""
         document = self._documents.get(str(document_id))
         if document is None:
-            raise DocumentNotFoundError(f"chưa đăng ký tài liệu {document_id}")
+            raise DocumentNotFoundError(f"document {document_id} is not registered")
         return document
 
 
@@ -314,7 +314,7 @@ class InMemoryObjectStore(ObjectStorePort, InMemoryAdapter):
     def _assert_available(self) -> None:
         """Mô phỏng phụ thuộc sập, phục vụ test chế độ suy giảm."""
         if not self.available:
-            raise ConnectionError("object store giả lập đang DOWN")
+            raise ConnectionError("fake object store is DOWN")
 
 
 class InMemoryIntentStore(IntentStorePort, InMemoryAdapter):
@@ -333,7 +333,9 @@ class InMemoryIntentStore(IntentStorePort, InMemoryAdapter):
         sẽ cho qua những lượt gọi mà bản thật từ chối (bất biến I13).
         """
         if str(intent.idempotency_key) in self._by_key:
-            raise ConcurrencyConflictError(f"idempotency_key {intent.idempotency_key} đã được dùng")
+            raise ConcurrencyConflictError(
+                f"idempotency_key {intent.idempotency_key} is already used"
+            )
         self._by_request[str(intent.request_id)] = intent
         self._by_key[str(intent.idempotency_key)] = str(intent.request_id)
 
@@ -416,7 +418,7 @@ class AllowAllPolicyDecision(PolicyDecisionPort):
     async def decide(self, principal: Principal, action: Action, resource: str) -> Decision:
         """Cho phép nếu hành động không nằm trong danh sách chặn."""
         if action in self.denied_actions and not principal.is_admin:
-            return Decision.deny(f"hành động {action} bị chặn trong profile fake")
+            return Decision.deny(f"action {action} is blocked in the fake profile")
         return Decision.allow()
 
     async def effective_policy(self, document_id: DocumentId) -> AccessPolicy:

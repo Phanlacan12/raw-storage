@@ -71,10 +71,10 @@ class UploadHandler:
                 break
             hasher.update(chunk)
             if hasher.size_bytes > self._max_bytes:
-                raise InvalidValueError(f"file vượt giới hạn {self._max_bytes} byte")
+                raise InvalidValueError(f"file exceeds the {self._max_bytes} byte limit")
             chunks.append(chunk)
         if hasher.size_bytes == 0:
-            raise InvalidValueError("file rỗng")
+            raise InvalidValueError("file is empty")
         request = UploadRequest(
             document_id=document_id,
             original_file_name=upload.filename or "unnamed",
@@ -105,5 +105,5 @@ class IdempotencyKeyFilter:
         if raw_value:
             return IdempotencyKey(raw_value)
         if self._required:
-            raise InvalidValueError("thiếu header Idempotency-Key")
+            raise InvalidValueError("missing Idempotency-Key header")
         return IdempotencyKey("auto-generated-key")

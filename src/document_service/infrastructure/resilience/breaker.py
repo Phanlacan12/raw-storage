@@ -139,7 +139,7 @@ class Bulkhead:
         """Giữ một slot, từ chối nhanh nếu hàng đợi đã đầy."""
         if not self.has_capacity():
             self._rejected += 1
-            raise asyncio.QueueFull("bulkhead đã đầy, từ chối nhanh")
+            raise asyncio.QueueFull("bulkhead is full, failing fast")
         self._waiting += 1
         try:
             await self._semaphore.acquire()

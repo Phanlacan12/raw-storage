@@ -163,8 +163,8 @@ class OutboxEventPublisher(EventPublisherPort, OutboundAdapter):
         """Đo độ sâu hàng đợi outbox."""
         pending = await self._outbox.pending_count()
         if pending > 0:
-            return self.health_degraded(f"outbox còn {pending} sự kiện chưa phát")
-        return self.health_up("outbox trống")
+            return self.health_degraded(f"outbox still holds {pending} unpublished events")
+        return self.health_up("outbox is empty")
 
 
 class EventSender(ABC):
@@ -214,17 +214,17 @@ class WebhookEventSender(EventSender):
             response = await self._client.post(url, json=record.as_payload())
         except httpx.HTTPError as error:
             raise ClassifiedError(
-                ErrorClass.RETRYABLE_TRANSIENT, f"gửi webhook lỗi: {error}"
+                ErrorClass.RETRYABLE_TRANSIENT, f"webhook send failed: {error}"
             ) from error
         if response.status_code >= 500 or response.status_code == 429:
             raise ClassifiedError(
                 ErrorClass.RETRYABLE_TRANSIENT,
-                f"downstream trả {response.status_code}",
+                f"downstream returned {response.status_code}",
             )
         if response.status_code >= 400:
             raise ClassifiedError(
                 ErrorClass.NON_RETRYABLE_CLIENT,
-                f"downstream từ chối với {response.status_code}",
+                f"downstream rejected with {response.status_code}",
             )
 
 
@@ -271,13 +271,13 @@ class OutboxDispatcher:
             if record.attempts >= self._settings.max_attempts:
                 report.given_up += 1
                 _LOGGER.error(
-                    "sự kiện vượt ngưỡng thử, cần can thiệp thủ công",
+                    "event exceeded the attempt limit, manual intervention needed",
                     extra={"event_id": record.event_id, "error": record.last_error},
                 )
                 continue
             await self._dispatch(record, report)
         report.pending = await self._outbox.pending_count()
-        _LOGGER.info("phát sự kiện xong", extra=report.as_payload())
+        _LOGGER.info("event dispatch finished", extra=report.as_payload())
         return report
 
     async def _dispatch(self, record: OutboxRecord, report: DispatchReport) -> None:
@@ -288,7 +288,7 @@ class OutboxDispatcher:
             await self._outbox.mark_attempt_failed(record.event_id, str(error))
             report.retried += 1
             _LOGGER.warning(
-                "gửi sự kiện thất bại, sẽ thử lại",
+                "event send failed, will retry",
                 extra={"event_id": record.event_id, "error": str(error)},
             )
             return

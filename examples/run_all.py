@@ -31,9 +31,9 @@ def main() -> int:
             [sys.executable, str(folder / name)], cwd=str(folder), check=False
         )
         if completed.returncode != 0:
-            print(f"\nVí dụ {name} thất bại (mã {completed.returncode}).")
+            print(f"\nExample {name} failed (exit code {completed.returncode}).")
             return completed.returncode
-    print(f"\n{'=' * 70}\nTất cả {len(EXAMPLES)} ví dụ chạy xong.\n{'=' * 70}")
+    print(f"\n{'=' * 70}\nAll {len(EXAMPLES)} examples finished.\n{'=' * 70}")
     return 0
 
 

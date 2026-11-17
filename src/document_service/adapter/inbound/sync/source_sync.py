@@ -126,7 +126,7 @@ class FileSystemSourceConnector(SourceConnector):
         root = Path(self._settings.root_path).expanduser()
         if not root.is_dir():
             _LOGGER.warning(
-                "nguồn không truy cập được",
+                "source is not reachable",
                 extra={"source_id": self.source_id, "root_path": str(root)},
             )
             return []
@@ -194,7 +194,7 @@ class SourceSyncJob:
                 built.append(FileSystemSourceConnector(source))
             else:
                 _LOGGER.warning(
-                    "chưa hỗ trợ loại nguồn này",
+                    "this source type is not supported yet",
                     extra={"source_id": source.source_id, "source_type": source.source_type},
                 )
         return built
@@ -207,7 +207,7 @@ class SourceSyncJob:
             for source_file in files:
                 report.scanned += 1
                 await self._sync_file(connector, source_file, report)
-        _LOGGER.info("đồng bộ nguồn xong", extra=report.as_payload())
+        _LOGGER.info("source sync finished", extra=report.as_payload())
         return report
 
     async def _sync_file(
@@ -227,7 +227,7 @@ class SourceSyncJob:
         except DomainError as error:
             report.failed.append(f"{source_file.relative_path}: {error}")
             _LOGGER.warning(
-                "đồng bộ một file thất bại",
+                "syncing one file failed",
                 extra={"source_id": connector.source_id, "error": str(error)},
             )
 
@@ -306,7 +306,7 @@ class SourceSyncScheduler:
     async def run_forever(self) -> None:
         """Lặp vô hạn, nghỉ giữa hai lượt theo `interval_seconds`."""
         if not self.enabled:
-            _LOGGER.info("đồng bộ nguồn đang tắt trong cấu hình")
+            _LOGGER.info("source sync is disabled in the configuration")
             return
         while True:
             await self._job.run_once()

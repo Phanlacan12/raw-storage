@@ -105,10 +105,10 @@ class CachingPolicyDecision(PolicyDecisionPort):
             return Decision.allow()
         policy = await self._policy_for_resource(resource)
         if policy is None:
-            return Decision.deny("không xác định được tài liệu để kiểm tra quyền")
+            return Decision.deny("cannot determine which document to authorize against")
         if policy.permits(principal, action):
             return Decision.allow()
-        return Decision.deny(f"policy {policy.classification} không cho phép {action}")
+        return Decision.deny(f"policy {policy.classification} does not allow {action}")
 
     async def _policy_for_resource(self, resource: str) -> AccessPolicy | None:
         """Policy của tài nguyên, None nếu tài nguyên không phải định danh tài liệu."""
@@ -122,10 +122,10 @@ class CachingPolicyDecision(PolicyDecisionPort):
     def _decide_by_group(self, principal: Principal, groups: list[str], action: Action) -> Decision:
         """Cho phép nếu chủ thể thuộc một trong các nhóm được cấu hình."""
         if not groups:
-            return Decision.deny(f"hành động {action} chưa được khai báo trong policy")
+            return Decision.deny(f"action {action} is not declared in the policy")
         if self._in_groups(principal, groups):
             return Decision.allow()
-        return Decision.deny(f"cần thuộc nhóm {groups} để {action}")
+        return Decision.deny(f"membership in {groups} is required to {action}")
 
     def _in_groups(self, principal: Principal, groups: list[str]) -> bool:
         """Chủ thể có thuộc một trong các nhóm hay không."""

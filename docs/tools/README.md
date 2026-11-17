@@ -12,7 +12,7 @@ cp <đường dẫn>/docs/tools/check-mermaid.mjs .
 node check-mermaid.mjs <đường dẫn>/docs
 ```
 
-Kết thúc sẽ in `N diagram lỗi`. Yêu cầu: `0 diagram lỗi` trước khi commit tài liệu kiến trúc.
+Kết thúc sẽ in `N broken diagram(s)`. Yêu cầu: `0 broken diagram(s)` trước khi commit tài liệu kiến trúc.
 
 ## Các lỗi đã gặp và quy tắc tránh
 

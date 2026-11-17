@@ -78,7 +78,7 @@ class UseCase(ABC, Generic[CommandT, ResultT]):
         """Kiểm tra quyền, phát lỗi nếu bị từ chối."""
         decision = await self._ports.policies.decide(principal, action, resource)
         if not decision.allowed:
-            raise PolicyDeniedError(decision.reason or f"không có quyền {action}")
+            raise PolicyDeniedError(decision.reason or f"not allowed to {action}")
 
     async def _record(
         self,

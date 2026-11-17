@@ -59,13 +59,13 @@ async def _relate(client: Any, relation: str, source: str, target: str) -> None:
         },
         headers={"Idempotency-Key": f"proj-rel-{source}-{relation}"},
     )
-    check(f"khai báo {relation}", response.status_code == 201)
+    check(f"declared {relation}", response.status_code == 201)
 
 
 async def main() -> None:
     """Chạy toàn bộ kịch bản dự án."""
     async with api_client() as client:
-        heading("1. Tạo ba tài liệu của Project A")
+        heading("1. Create three documents for Project A")
         urd = await _document(client, "URD", "User Requirements Document")
         srs = await _document(client, "SRS", "Software Requirements Specification")
         sad = await _document(client, "SAD", "Software Architecture Document")
@@ -73,7 +73,7 @@ async def main() -> None:
         line("SRS", srs)
         line("SAD", sad)
 
-        heading("2. Tạo các phiên bản")
+        heading("2. Create the versions")
         urd_v10 = await _version(client, urd, "1.0", b"URD ban dau")
         urd_v12 = await _version(client, urd, "1.2", b"URD cap nhat")
         srs_v10 = await _version(client, srs, "1.0", b"SRS ban dau")
@@ -83,11 +83,11 @@ async def main() -> None:
         line("SRS v1.0 / v2.0", f"{srs_v10} / {srs_v20}")
         line("SAD v1.1", sad_v11)
 
-        heading("3. Khai báo quan hệ theo phiên bản")
+        heading("3. Declare relationships per version")
         await _relate(client, "derived_from", srs_v20, urd_v12)
         await _relate(client, "references", sad_v11, srs_v20)
 
-        heading("4. Truy vết từ SRS v2.0")
+        heading("4. Trace from SRS v2.0")
         outgoing = await client.get(
             f"/api/v1/versions/{srs_v20}/relationships", params={"direction": "outgoing"}
         )
@@ -101,46 +101,46 @@ async def main() -> None:
             ),
         )
 
-        heading("5. Truy vấn ngược từ URD v1.2")
+        heading("5. Reverse lookup from URD v1.2")
         incoming = await client.get(
             f"/api/v1/versions/{urd_v12}/relationships", params={"direction": "incoming"}
         )
         for item in incoming.json():
             line(item["relation_type"], f'<- {item["target_version_id"]}')
         check(
-            "URD v1.2 được SRS v2.0 dẫn xuất",
+            "URD v1.2 is derived by SRS v2.0",
             any(item["target_version_id"] == srs_v20 for item in incoming.json()),
         )
 
-        heading("6. Tạo SRS v2.1 — quan hệ cũ phải giữ nguyên")
+        heading("6. Create SRS v2.1 - existing relationships must stay")
         srs_v21 = await _version(client, srs, "2.1", b"SRS cap nhat nho")
         line("SRS v2.1", srs_v21)
         after = await client.get(
             f"/api/v1/versions/{srs_v20}/relationships", params={"direction": "outgoing"}
         )
         check(
-            "quan hệ của v2.0 không bị đổi đích",
+            "v2.0 relationship target unchanged",
             [item["target_version_id"] for item in after.json()] == [urd_v12],
         )
         new_version_edges = await client.get(
             f"/api/v1/versions/{srs_v21}/relationships", params={"direction": "outgoing"}
         )
-        check("v2.1 chưa có quan hệ nào", new_version_edges.json() == [])
+        check("v2.1 has no relationship yet", new_version_edges.json() == [])
 
-        heading("7. KB lấy tài liệu Approved của dự án")
+        heading("7. KB fetches the project's Approved documents")
         approved = await client.get(
             "/api/v1/search", params={"collection_id": COLLECTION, "status": "Approved"}
         )
         for hit in approved.json()["hits"]:
             line(hit["document_type"], f'{hit["version_label"]} · {hit["document_version_id"]}')
         types = sorted(hit["document_type"] for hit in approved.json()["hits"])
-        check("đủ ba loại tài liệu", types == ["SAD", "SRS", "URD"])
+        check("all three document types", types == ["SAD", "SRS", "URD"])
         check(
-            "mỗi tài liệu đúng một bản hiện hành",
+            "exactly one current version per document",
             len(approved.json()["hits"]) == 3,
         )
 
-        print("\nVí dụ 2 hoàn tất.")
+        print("\nExample 2 complete.")
 
 
 if __name__ == "__main__":

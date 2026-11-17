@@ -94,7 +94,7 @@ class OpenMetadataCatalogAdapter(MetadataCatalogPort, OutboundAdapter):
         )
         if self._guard.changed_unexpectedly(captured, updated):
             self._logger.warning(
-                "entity version lệch sau khi patch",
+                "entity version mismatch after patch",
                 extra={"version_id": str(version_id), "captured": captured},
             )
 
@@ -139,7 +139,8 @@ class OpenMetadataCatalogAdapter(MetadataCatalogPort, OutboundAdapter):
         version = await self._client.server_version()
         if not self._client.pin.matches(version):
             return self.health_degraded(
-                f"server {version} lệch bản đã cố định {self._client.pin.pinned_version}"
+                f"server {version} differs from pinned version "
+                f"{self._client.pin.pinned_version}"
             )
         return self.health_up(f"version={version}")
 
@@ -156,10 +157,10 @@ class OpenMetadataCatalogAdapter(MetadataCatalogPort, OutboundAdapter):
             )
         except ClassifiedError as error:
             if error.error_class is ErrorClass.NON_RETRYABLE_CLIENT:
-                raise DocumentNotFoundError(f"chưa đăng ký tài liệu {document_id}") from error
+                raise DocumentNotFoundError(f"document {document_id} is not registered") from error
             raise
         if not payload.get("id"):
-            raise DocumentNotFoundError(f"chưa đăng ký tài liệu {document_id}")
+            raise DocumentNotFoundError(f"document {document_id} is not registered")
         return payload
 
     async def _find_file(self, version_id: DocumentVersionId) -> dict[str, Any]:
@@ -168,7 +169,7 @@ class OpenMetadataCatalogAdapter(MetadataCatalogPort, OutboundAdapter):
         query = SearchQuery(filters=filters, page_size=1)
         page = await self.search(query)
         if not page.hits:
-            raise DocumentNotFoundError(f"không tìm thấy phiên bản {version_id}")
+            raise DocumentNotFoundError(f"version {version_id} not found")
         hit = page.hits[0]
         fqn = self._fqn.version_fqn(hit.document_id, hit.version_id)
         try:
@@ -177,10 +178,10 @@ class OpenMetadataCatalogAdapter(MetadataCatalogPort, OutboundAdapter):
             )
         except ClassifiedError as error:
             if error.error_class is ErrorClass.NON_RETRYABLE_CLIENT:
-                raise DocumentNotFoundError(f"không đọc được phiên bản {version_id}") from error
+                raise DocumentNotFoundError(f"cannot read version {version_id}") from error
             raise
         if not payload.get("id"):
-            raise DocumentNotFoundError(f"không đọc được phiên bản {version_id}")
+            raise DocumentNotFoundError(f"cannot read version {version_id}")
         return payload
 
     def _document_extension(self, document: Document) -> dict[str, Any]:

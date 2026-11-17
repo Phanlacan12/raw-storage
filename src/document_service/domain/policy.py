@@ -65,7 +65,7 @@ class DedupPolicy(DomainPolicy):
         existing = self.duplicate_of(document, checksum)
         self._require(
             existing is None,
-            DuplicateContentError(f"nội dung đã có trong tài liệu {document.document_id}"),
+            DuplicateContentError(f"content already exists in document {document.document_id}"),
         )
 
 
@@ -136,7 +136,7 @@ class LifecyclePolicy(DomainPolicy):
         self._require(
             len(approved) <= 1,
             StatusTransitionError(
-                f"tài liệu {document.document_id} có {len(approved)} bản Approved"
+                f"document {document.document_id} has {len(approved)} Approved versions"
             ),
         )
 
@@ -161,7 +161,7 @@ class LifecyclePolicy(DomainPolicy):
             return self.approve(document, version_id, actor)
         if target is DocumentStatus.OBSOLETE:
             return ApprovalResult(approved=document.obsolete(version_id, actor))
-        raise StatusTransitionError(f"không hỗ trợ chuyển về trạng thái {target}")
+        raise StatusTransitionError(f"transition to status {target} is not supported")
 
     def current_version_fields(self, document: Document) -> dict[str, str]:
         """Trường bản hiện hành cần ghi vào catalog sau khi duyệt (bất biến I14)."""
@@ -195,6 +195,7 @@ class RelationshipPolicy(DomainPolicy):
             )
             if same_edge and item.target_version_id != relationship.target_version_id:
                 raise RelationshipRebindError(
-                    f"quan hệ {relationship.relation_type} từ {relationship.source_version_id} "
-                    f"đã trỏ tới {item.target_version_id}"
+                    f"relationship {relationship.relation_type} "
+                    f"from {relationship.source_version_id} "
+                    f"already points to {item.target_version_id}"
                 )

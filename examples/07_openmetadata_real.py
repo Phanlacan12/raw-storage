@@ -31,16 +31,16 @@ def _missing_env() -> list[str]:
 
 def _print_instructions(missing: list[str]) -> None:
     """In hướng dẫn dựng hạ tầng."""
-    print("Ví dụ này cần hạ tầng thật, hiện còn thiếu biến môi trường:")
+    print("This example needs real infrastructure, these env vars are missing:")
     for name in missing:
         print(f"  - {name}")
-    print("\nCách chạy:")
+    print("\nHow to run:")
     print("  docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d")
     print("  until curl -sf http://localhost:8586/healthcheck >/dev/null; do sleep 5; done")
     print("  aws --endpoint-url http://localhost:8333 s3 mb s3://raw-documents")
     print("  set -a && source deploy/.env && set +a")
     print("  uv run python examples/07_openmetadata_real.py")
-    print("\nChi tiết: deploy/README.md")
+    print("\nDetails: deploy/README.md")
 
 
 async def main() -> None:
@@ -66,26 +66,26 @@ async def main() -> None:
     settings = SettingsProvider().reload()
     container = ServiceContainer(settings)
 
-    heading("1. Chuẩn bị schema trên OpenMetadata")
+    heading("1. Prepare the schema on OpenMetadata")
     client = OmHttpClient(settings.catalog, container.executor("catalog"))
     try:
         await OmSchemaMigration(client, settings.catalog).run_on_startup()
         line("drive service", settings.catalog.drive_service_name)
-        line("custom property bắt buộc", ", ".join(settings.catalog.required_properties))
-        print("  [OK  ] migration schema chạy xong")
+        line("required custom property", ", ".join(settings.catalog.required_properties))
+        print("  [OK  ] schema migration finished")
     except Exception as error:  # hạ tầng thật có thể từ chối vì nhiều lý do
-        print(f"  [SAI ] migration thất bại: {error}")
-        print("  Kiểm tra DS_CATALOG__BOT_TOKEN và phiên bản server.")
+        print(f"  [FAIL] migration failed: {error}")
+        print("  Check DS_CATALOG__BOT_TOKEN and the server version.")
         await client.aclose()
         sys.exit(1)
 
-    heading("2. Health của từng phụ thuộc")
+    heading("2. Health of each dependency")
     report = await container.health.details(settings.health.probe_timeout_seconds)
     for item in report.results:
         line(item.name, f"{item.status} · {item.detail[:50]}")
-    check("mọi phụ thuộc đều phục vụ được", all(item.healthy for item in report.results))
+    check("every dependency can serve", all(item.healthy for item in report.results))
 
-    heading("3. Đăng ký tài liệu và một phiên bản")
+    heading("3. Register a document and one version")
     principal = Principal(principal_id="example", groups=("document-admins",), is_admin=True)
     from document_service.application.usecase.create_version import CreateVersionCommand
     from document_service.application.usecase.register_document import RegisterDocumentCommand
@@ -122,9 +122,9 @@ async def main() -> None:
     )
     line("document_version_id", result.version.version_id)
     line("storage_uri", result.version.storage_uri)
-    check("tạo được phiên bản", result.created or result.duplicate)
+    check("version created", result.created or result.duplicate)
 
-    heading("4. POC-19 — lọc custom property qua Search API thật")
+    heading("4. POC-19 - filtering by custom property through the real Search API")
     page = await container.ports.catalog.search(
         SearchQuery(
             filters=(
@@ -133,26 +133,26 @@ async def main() -> None:
             )
         )
     )
-    line("số kết quả", page.total_hits)
+    line("result count", page.total_hits)
     if any(hit.version_id == result.version.version_id for hit in page.hits):
-        print("  [OK  ] Search API lọc được custom property → POC-19 đạt native")
+        print("  [OK  ] Search API can filter by custom property, POC-19 met natively")
     else:
-        print("  [SAI ] Search API KHÔNG lọc được custom property")
-        print("         Ghi 'Không đạt' cho POC-19 và tính chi phí bật C9 Search Gateway.")
-        print("         Lưu ý: index có thể còn trễ, thử lại sau vài giây trước khi kết luận.")
+        print("  [FAIL] Search API CANNOT filter by custom property")
+        print("         Record 'Not met' for POC-19 and budget for enabling C9 Search Gateway.")
+        print("         Note: the index may still lag, retry in a few seconds before concluding.")
 
-    heading("5. Tải file từ Object Storage thật")
+    heading("5. Download the file from real Object Storage")
     builder = CatalogMetadataBuilder()
     line(
-        "metadata lọc được",
+        "metadata is filterable",
         ", ".join(builder.filterable_subset(builder.build(document, result.version)).keys()),
     )
     url = await container.presigned_issuer().issue(result.version.storage_uri)
     line("presigned url", f"{url[:80]}...")
-    check("cấp được link tải", bool(url))
+    check("download link issued", bool(url))
 
     await client.aclose()
-    print("\nVí dụ 7 hoàn tất. Ghi kết quả vào docs/c4-08-tra-soat-code-vs-thiet-ke.md")
+    print("\nExample 7 complete. Record the outcome in docs/c4-08-tra-soat-code-vs-thiet-ke.md")
 
 
 if __name__ == "__main__":

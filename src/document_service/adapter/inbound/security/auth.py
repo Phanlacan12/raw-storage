@@ -53,13 +53,13 @@ class OidcTokenVerifier:
             )
         except (jwt.PyJWTError, httpx.HTTPError) as error:
             self._jwks_available = False
-            _LOGGER.warning("xác thực token thất bại", extra={"error": str(error)})
-            raise PolicyDeniedError("token không hợp lệ") from error
+            _LOGGER.warning("token verification failed", extra={"error": str(error)})
+            raise PolicyDeniedError("invalid token") from error
 
     def _signing_key(self, token: str) -> Any:
         """Lấy khóa công khai tương ứng token."""
         if not self._settings.oidc_jwks_url:
-            raise PolicyDeniedError("chưa cấu hình JWKS cho IdP")
+            raise PolicyDeniedError("JWKS is not configured for the IdP")
         if self._jwk_client is None:
             self._jwk_client = PyJWKClient(self._settings.oidc_jwks_url)
         key = self._jwk_client.get_signing_key_from_jwt(token).key
@@ -87,7 +87,7 @@ class PrincipalResolver:
         if self._settings.auth_disabled:
             return self._from_headers(headers)
         if not authorization or not authorization.lower().startswith("bearer "):
-            raise PolicyDeniedError("thiếu bearer token")
+            raise PolicyDeniedError("missing bearer token")
         claims = self._verifier.verify(authorization.split(" ", 1)[1].strip())
         groups = self._claim_groups(claims)
         return Principal(
