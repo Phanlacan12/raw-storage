@@ -15,11 +15,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Awaitable, Callable, TypeVar
 
-from document_service.infrastructure.health import (
-    DependencyKind,
-    HealthProbeMixin,
-    HealthResult,
-)
+from document_service.infrastructure.health import DependencyKind, HealthProbeMixin, HealthResult
 from document_service.infrastructure.resilience.breaker import BreakerState
 from document_service.infrastructure.resilience.deadline import Deadline
 from document_service.infrastructure.resilience.executor import ResilientCallExecutor

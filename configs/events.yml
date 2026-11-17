@@ -1,0 +1,14 @@
+# Phát sự kiện thay đổi cho downstream (C10 Event Publisher / Outbox).
+# Sự kiện luôn được ghi vào outbox bền vững; phần gửi đi là tùy chọn.
+# Mọi bản ghi chưa `published` là việc còn nợ downstream — đó là cách phát hiện
+# sự kiện thất lạc theo yêu cầu mục 2.5 báo cáo và test case POC-11.
+events:
+  # false = chỉ ghi outbox, không gửi đi (mặc định an toàn khi chưa có downstream)
+  enabled: false
+  # Danh sách endpoint nhận sự kiện. Mỗi sự kiện gửi tới mọi endpoint.
+  webhook_urls: []
+  # Số sự kiện lấy mỗi lượt và chu kỳ chạy worker
+  batch_size: 50
+  interval_seconds: 15.0
+  # Vượt ngưỡng thì đánh dấu lỗi và cảnh báo, không thử lại vô hạn
+  max_attempts: 5

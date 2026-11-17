@@ -44,17 +44,12 @@ from document_service.domain.port import (
     PolicyDecisionPort,
     RelationshipStorePort,
 )
-from document_service.infrastructure.health import (
-    DependencyKind,
-    HealthProbeMixin,
-    HealthResult,
-)
 from document_service.domain.value import (
     Action,
-    DocumentStatus,
     Checksum,
     Direction,
     DocumentId,
+    DocumentStatus,
     DocumentVersionId,
     IdempotencyKey,
     IntentState,
@@ -62,6 +57,7 @@ from document_service.domain.value import (
     RequestId,
     StorageUri,
 )
+from document_service.infrastructure.health import DependencyKind, HealthProbeMixin, HealthResult
 from document_service.utils.clock import utc_now
 from document_service.utils.hashing import digest_of
 
@@ -152,9 +148,7 @@ class InMemoryCatalog(MetadataCatalogPort, InMemoryAdapter):
         if "status" in fields:
             self._apply_status(version_id, str(fields["status"]))
 
-    async def patch_document_fields(
-        self, document_id: DocumentId, fields: dict[str, Any]
-    ) -> None:
+    async def patch_document_fields(self, document_id: DocumentId, fields: dict[str, Any]) -> None:
         """Cập nhật metadata kiểm soát ở mức tài liệu và entity đã lưu."""
         self._metadata.setdefault(str(document_id), {}).update(fields)
         document = self._documents.get(str(document_id))
@@ -202,8 +196,13 @@ class InMemoryCatalog(MetadataCatalogPort, InMemoryAdapter):
         return SearchPage(hits=tuple(hits), total_hits=len(hits))
 
     def _matches(self, document: Document, version: DocumentVersion, query: SearchQuery) -> bool:
-        """So khớp một phiên bản với truy vấn."""
-        metadata = self._builder.build(document, version)
+        """So khớp một phiên bản với truy vấn, dựa trên metadata **đã đăng ký**.
+
+        Catalog thật index đúng những gì được ghi vào, nên fake cũng phải tra theo
+        metadata đã nhận ở `register_version` và `patch_controlled_fields`, không suy
+        lại từ entity.
+        """
+        metadata = self._indexed_metadata(document, version)
         for item in query.filters:
             if str(metadata.get(item.field_name, "")) != item.value:
                 return False
@@ -211,12 +210,19 @@ class InMemoryCatalog(MetadataCatalogPort, InMemoryAdapter):
             return False
         return True
 
+    def _indexed_metadata(self, document: Document, version: DocumentVersion) -> dict[str, Any]:
+        """Metadata đã đăng ký của một phiên bản, bù phần thiếu từ entity."""
+        base = self._builder.build(document, version)
+        base.update(self._metadata.get(str(version.version_id), {}))
+        return base
+
     def _to_hit(self, document: Document, version: DocumentVersion) -> SearchHit:
         """Chuyển phiên bản thành một kết quả tìm kiếm."""
+        indexed = self._indexed_metadata(document, version)
         return SearchHit(
             version_id=version.version_id,
             document_id=document.document_id,
-            status=version.status,
+            status=DocumentStatus(str(indexed.get("status", version.status))),
             metadata=document.metadata,
             label=version.label,
             access_policy=document.access_policy,
@@ -327,9 +333,7 @@ class InMemoryIntentStore(IntentStorePort, InMemoryAdapter):
         sẽ cho qua những lượt gọi mà bản thật từ chối (bất biến I13).
         """
         if str(intent.idempotency_key) in self._by_key:
-            raise ConcurrencyConflictError(
-                f"idempotency_key {intent.idempotency_key} đã được dùng"
-            )
+            raise ConcurrencyConflictError(f"idempotency_key {intent.idempotency_key} đã được dùng")
         self._by_request[str(intent.request_id)] = intent
         self._by_key[str(intent.idempotency_key)] = str(intent.request_id)
 
@@ -465,9 +469,7 @@ class InMemoryDocumentLock(DocumentLockPort, InMemoryAdapter):
         InMemoryAdapter.__init__(self, "document_lock", DependencyKind.REQUIRED_FOR_WRITE)
         self._locks: dict[str, asyncio.Lock] = {}
 
-    async def with_lock(
-        self, document_id: DocumentId, operation: Callable[[], Awaitable[T]]
-    ) -> T:
+    async def with_lock(self, document_id: DocumentId, operation: Callable[[], Awaitable[T]]) -> T:
         """Chạy thao tác trong khóa của tài liệu."""
         lock = self._locks.setdefault(str(document_id), asyncio.Lock())
         async with lock:

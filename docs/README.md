@@ -18,6 +18,7 @@
 | Dynamic | [c4-05-dynamic-views.md](c4-05-dynamic-views.md) | Luồng động: upload, duyệt, tra cứu/tải, thu hồi, đồng bộ, phục hồi lỗi |
 | Deployment | [c4-06-deployment.md](c4-06-deployment.md) | Triển khai PoC một máy và triển khai on-premise |
 | Index | [c4-07-element-catalog.md](c4-07-element-catalog.md) | Danh mục toàn bộ phần tử, ánh xạ mục báo cáo và test case PoC, quyết định còn mở |
+| Đối soát | [c4-08-tra-soat-code-vs-thiet-ke.md](c4-08-tra-soat-code-vs-thiet-ke.md) | Code đã hiện thực tới đâu, lệch chỗ nào và vì sao, kết quả kiểm chứng đã chạy |
 
 Thứ tự đọc khuyến nghị: L1 → L2 → Dynamic → L3 → L4 (dữ liệu rồi mã nguồn) → Deployment. Người ra quyết định chỉ cần L1, L2 và bảng quyết định còn mở ở [c4-07](c4-07-element-catalog.md).
 

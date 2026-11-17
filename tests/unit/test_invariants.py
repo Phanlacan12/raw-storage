@@ -52,7 +52,9 @@ from document_service.utils.hashing import digest_of
 DOCUMENT_TYPE = "SRS"
 
 
-def _upload(document_id: DocumentId, payload: bytes, key: str, label: str | None = None) -> UploadRequest:
+def _upload(
+    document_id: DocumentId, payload: bytes, key: str, label: str | None = None
+) -> UploadRequest:
     """Dựng UploadRequest cho test."""
     from document_service.domain.value import Actor
 

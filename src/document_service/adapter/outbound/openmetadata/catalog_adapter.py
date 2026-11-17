@@ -33,6 +33,7 @@ from document_service.domain.port import MetadataCatalogPort
 from document_service.domain.value import DocumentId, DocumentVersionId
 from document_service.infrastructure.health import DependencyKind, HealthResult
 from document_service.infrastructure.resilience.executor import ResilientCallExecutor
+from document_service.infrastructure.resilience.retry import ClassifiedError, ErrorClass
 
 
 class OpenMetadataCatalogAdapter(MetadataCatalogPort, OutboundAdapter):
@@ -97,9 +98,7 @@ class OpenMetadataCatalogAdapter(MetadataCatalogPort, OutboundAdapter):
                 extra={"version_id": str(version_id), "captured": captured},
             )
 
-    async def patch_document_fields(
-        self, document_id: DocumentId, fields: dict[str, Any]
-    ) -> None:
+    async def patch_document_fields(self, document_id: DocumentId, fields: dict[str, Any]) -> None:
         """Cập nhật trường kiểm soát ở mức tài liệu."""
         entity = await self._get_directory(document_id)
         await self._client.patch(
@@ -145,11 +144,20 @@ class OpenMetadataCatalogAdapter(MetadataCatalogPort, OutboundAdapter):
         return self.health_up(f"version={version}")
 
     async def _get_directory(self, document_id: DocumentId) -> dict[str, Any]:
-        """Đọc Directory theo FQN, lỗi rõ ràng nếu chưa đăng ký."""
+        """Đọc Directory theo FQN, lỗi rõ ràng nếu chưa đăng ký.
+
+        404 của catalog được dịch sang `DocumentNotFoundError` để lớp HTTP trả 404,
+        thay vì để lỗi hạ tầng rò lên thành 400 hoặc 500.
+        """
         fqn = self._fqn.document_fqn(document_id)
-        payload = await self._client.get(
-            f"{endpoints.DIRECTORY_BY_NAME}/{fqn}", {"fields": "extension"}
-        )
+        try:
+            payload = await self._client.get(
+                f"{endpoints.DIRECTORY_BY_NAME}/{fqn}", {"fields": "extension"}
+            )
+        except ClassifiedError as error:
+            if error.error_class is ErrorClass.NON_RETRYABLE_CLIENT:
+                raise DocumentNotFoundError(f"chưa đăng ký tài liệu {document_id}") from error
+            raise
         if not payload.get("id"):
             raise DocumentNotFoundError(f"chưa đăng ký tài liệu {document_id}")
         return payload
@@ -163,9 +171,14 @@ class OpenMetadataCatalogAdapter(MetadataCatalogPort, OutboundAdapter):
             raise DocumentNotFoundError(f"không tìm thấy phiên bản {version_id}")
         hit = page.hits[0]
         fqn = self._fqn.version_fqn(hit.document_id, hit.version_id)
-        payload = await self._client.get(
-            f"{endpoints.FILE_BY_NAME}/{fqn}", {"fields": "extension"}
-        )
+        try:
+            payload = await self._client.get(
+                f"{endpoints.FILE_BY_NAME}/{fqn}", {"fields": "extension"}
+            )
+        except ClassifiedError as error:
+            if error.error_class is ErrorClass.NON_RETRYABLE_CLIENT:
+                raise DocumentNotFoundError(f"không đọc được phiên bản {version_id}") from error
+            raise
         if not payload.get("id"):
             raise DocumentNotFoundError(f"không đọc được phiên bản {version_id}")
         return payload

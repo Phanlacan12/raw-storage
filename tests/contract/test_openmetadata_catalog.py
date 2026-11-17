@@ -105,25 +105,27 @@ class TestOpenMetadataAdapter:
     async def test_register_document_maps_to_directory(
         self, adapter: OpenMetadataCatalogAdapter
     ) -> None:
-        """Tài liệu được ghi thành Directory, đặt dưới collection."""
+        """Tài liệu được ghi thành Directory **đặt trực tiếp dưới thư mục gốc**.
+
+        Không đặt dưới Directory của collection: FQN phải ổn định khi tài liệu chuyển
+        collection, và `read_document(document_id)` phải tra được mà không cần biết
+        collection. Quan hệ với collection nằm ở `extension.collection_id`.
+        """
         respx.put(f"{BASE_URL}/api/v1/drives/directories").mock(
             return_value=httpx.Response(200, json={"id": "dir-1"})
         )
         document = Document(
             document_id=DocumentId("DOC-1"),
-            metadata=DocumentMetadata(
-                title="SRS", document_type="SRS", collection_id="PROJECT-A"
-            ),
+            metadata=DocumentMetadata(title="SRS", document_type="SRS", collection_id="PROJECT-A"),
         )
         ref = await adapter.register_document(document)
         assert ref.entity_id == "dir-1"
         payload = respx.calls.last.request.read().decode()
-        assert '"parent":"raw.documents.PROJECT-A"' in payload
+        assert '"parent":"raw.documents"' in payload
+        assert '"collection_id":"PROJECT-A"' in payload
 
     @respx.mock
-    async def test_patch_uses_replace_only(
-        self, adapter: OpenMetadataCatalogAdapter
-    ) -> None:
+    async def test_patch_uses_replace_only(self, adapter: OpenMetadataCatalogAdapter) -> None:
         """JSON Patch chỉ dùng `replace`, vì `add` vào mảng không idempotent."""
         respx.get(f"{BASE_URL}/api/v1/search/query").mock(
             return_value=httpx.Response(
@@ -136,15 +138,13 @@ class TestOpenMetadataAdapter:
                 },
             )
         )
-        respx.get(
-            f"{BASE_URL}/api/v1/drives/files/name/raw.documents.DOC-1.VER-1"
-        ).mock(return_value=httpx.Response(200, json={"id": "file-1", "version": 1.0}))
+        respx.get(f"{BASE_URL}/api/v1/drives/files/name/raw.documents.DOC-1.VER-1").mock(
+            return_value=httpx.Response(200, json={"id": "file-1", "version": 1.0})
+        )
         respx.patch(f"{BASE_URL}/api/v1/drives/files/file-1").mock(
             return_value=httpx.Response(200, json={"id": "file-1", "version": 1.1})
         )
-        await adapter.patch_controlled_fields(
-            DocumentVersionId("VER-1"), {"status": "Approved"}
-        )
+        await adapter.patch_controlled_fields(DocumentVersionId("VER-1"), {"status": "Approved"})
         body = respx.calls.last.request.read().decode()
         assert '"op":"replace"' in body
         assert '"path":"/extension/status"' in body
@@ -180,13 +180,9 @@ class TestOpenMetadataAdapter:
         assert "extension.status" in request_url
 
     @respx.mock
-    async def test_read_document_builds_versions(
-        self, adapter: OpenMetadataCatalogAdapter
-    ) -> None:
+    async def test_read_document_builds_versions(self, adapter: OpenMetadataCatalogAdapter) -> None:
         """Đọc Directory kèm các File entity con thành một Document đầy đủ."""
-        respx.get(
-            f"{BASE_URL}/api/v1/drives/directories/name/raw.documents.DOC-1"
-        ).mock(
+        respx.get(f"{BASE_URL}/api/v1/drives/directories/name/raw.documents.DOC-1").mock(
             return_value=httpx.Response(
                 200,
                 json={
@@ -213,9 +209,7 @@ class TestOpenMetadataAdapter:
         assert document.current_version_id == DocumentVersionId("VER-1")
 
     @respx.mock
-    async def test_retries_on_503_then_fails(
-        self, adapter: OpenMetadataCatalogAdapter
-    ) -> None:
+    async def test_retries_on_503_then_fails(self, adapter: OpenMetadataCatalogAdapter) -> None:
         """503 là lỗi tạm thời: retry rồi báo phụ thuộc không khả dụng."""
         route = respx.put(f"{BASE_URL}/api/v1/drives/files").mock(
             return_value=httpx.Response(503, text="unavailable")
@@ -225,9 +219,7 @@ class TestOpenMetadataAdapter:
         assert route.call_count == 2
 
     @respx.mock
-    async def test_client_error_is_not_retried(
-        self, adapter: OpenMetadataCatalogAdapter
-    ) -> None:
+    async def test_client_error_is_not_retried(self, adapter: OpenMetadataCatalogAdapter) -> None:
         """400 là lỗi phía client: trả ngay, không retry."""
         from document_service.infrastructure.resilience.retry import ClassifiedError
 

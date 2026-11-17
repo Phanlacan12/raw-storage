@@ -13,6 +13,8 @@ Mỗi khối cấu hình một file, để sửa một thứ không phải đọ
 | `security.yml` | `security` | IdP/OIDC, nhóm quản trị, bắt buộc Idempotency-Key, TTL cache policy | `docs/c4-04b` mục 13 |
 | `resilience.yml` | `resilience` | timeout, retry, breaker, bulkhead cho **từng** phụ thuộc | `docs/c4-04b` mục 11.3 |
 | `health.yml` | `health` | TTL cache health, timeout probe, ngưỡng backlog, hạn chót khởi động | `docs/c4-04b` mục 10 |
+| `sync.yml` | `sync` | nguồn tài liệu hiện có, chu kỳ đồng bộ, ánh xạ quyền từ nguồn | D17, POC-12 |
+| `events.yml` | `events` | bật/tắt gửi sự kiện, danh sách webhook, ngưỡng số lần thử | C10, POC-11 |
 
 ## Thứ tự ưu tiên
 

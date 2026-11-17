@@ -82,9 +82,7 @@ class OmCustomPropertyRegistrar:
         payload = await self._client.get(f"{endpoints.METADATA_TYPES}/name/{entity_type}")
         items = payload.get("customProperties", []) or []
         return {
-            str(item.get("name"))
-            for item in items
-            if isinstance(item, dict) and item.get("name")
+            str(item.get("name")) for item in items if isinstance(item, dict) and item.get("name")
         }
 
     async def ensure_properties(
@@ -150,14 +148,11 @@ class OmSchemaMigration:
         version = await self._client.server_version()
         if not self._client.pin.matches(version):
             raise SchemaNotReadyError(
-                f"server {version} lệch phiên bản đã cố định "
-                f"{self._client.pin.pinned_version}"
+                f"server {version} lệch phiên bản đã cố định " f"{self._client.pin.pinned_version}"
             )
         await self._provisioner.ensure_drive_service()
         await self._provisioner.ensure_root_directory()
-        definitions = [
-            PropertyDefinition(name=name) for name in self._settings.required_properties
-        ]
+        definitions = [PropertyDefinition(name=name) for name in self._settings.required_properties]
         for entity_type in ("file", "directory"):
             added = await self._registrar.ensure_properties(entity_type, definitions)
             if added:

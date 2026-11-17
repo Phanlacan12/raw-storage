@@ -204,9 +204,11 @@ class S3ObjectStoreAdapter(ObjectStorePort, OutboundAdapter):
             error_class = (
                 ErrorClass.RETRYABLE_THROTTLED
                 if code in _RETRYABLE_CODES
-                else ErrorClass.NON_RETRYABLE_CLIENT
-                if 400 <= status < 500
-                else ErrorClass.RETRYABLE_TRANSIENT
+                else (
+                    ErrorClass.NON_RETRYABLE_CLIENT
+                    if 400 <= status < 500
+                    else ErrorClass.RETRYABLE_TRANSIENT
+                )
             )
             raise ClassifiedError(error_class, f"S3 {code}: {error}") from error
         except BotoCoreError as error:

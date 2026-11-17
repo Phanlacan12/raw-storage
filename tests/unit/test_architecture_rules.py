@@ -90,16 +90,12 @@ class TestWritePathRules:
 
     def test_relationship_write_checks_rebind(self) -> None:
         """Khai báo quan hệ luôn kiểm tra ràng buộc không đổi đích (I6)."""
-        source = (SRC / "application" / "usecase" / "relationships.py").read_text(
-            encoding="utf-8"
-        )
+        source = (SRC / "application" / "usecase" / "relationships.py").read_text(encoding="utf-8")
         assert "assert_target_not_rebound" in source
 
     def test_version_creation_uses_intent_before_object(self) -> None:
         """Intent được ghi trước khi ghi object (mục 3.5 báo cáo)."""
-        source = (SRC / "application" / "usecase" / "create_version.py").read_text(
-            encoding="utf-8"
-        )
+        source = (SRC / "application" / "usecase" / "create_version.py").read_text(encoding="utf-8")
         intent_index = source.index("intents.create(intent)")
         saga_index = source.index("_run_saga(")
         assert intent_index < saga_index

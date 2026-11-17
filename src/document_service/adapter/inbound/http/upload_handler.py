@@ -10,15 +10,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import AsyncIterator, Protocol
 
-from document_service.domain.errors import InvalidValueError
 from document_service.domain.dto import UploadRequest
+from document_service.domain.errors import InvalidValueError
 from document_service.domain.model import Principal
-from document_service.domain.value import (
-    Checksum,
-    DocumentId,
-    IdempotencyKey,
-    VersionLabel,
-)
+from document_service.domain.value import Checksum, DocumentId, IdempotencyKey, VersionLabel
 from document_service.utils.hashing import StreamingHasher
 
 CHUNK_SIZE = 1024 * 1024
@@ -76,9 +71,7 @@ class UploadHandler:
                 break
             hasher.update(chunk)
             if hasher.size_bytes > self._max_bytes:
-                raise InvalidValueError(
-                    f"file vượt giới hạn {self._max_bytes} byte"
-                )
+                raise InvalidValueError(f"file vượt giới hạn {self._max_bytes} byte")
             chunks.append(chunk)
         if hasher.size_bytes == 0:
             raise InvalidValueError("file rỗng")

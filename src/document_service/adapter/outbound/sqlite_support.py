@@ -63,7 +63,9 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
         version_id TEXT NOT NULL DEFAULT '',
         payload TEXT NOT NULL DEFAULT '{}',
         occurred_at TEXT NOT NULL,
-        published INTEGER NOT NULL DEFAULT 0
+        published INTEGER NOT NULL DEFAULT 0,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT NOT NULL DEFAULT ''
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_outbox_pending ON outbox_event(published, event_id)",

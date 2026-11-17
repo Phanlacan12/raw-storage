@@ -99,9 +99,7 @@ class CachingPolicyDecision(PolicyDecisionPort):
         else:
             self._cache.pop(str(document_id), None)
 
-    async def _decide_read(
-        self, principal: Principal, action: Action, resource: str
-    ) -> Decision:
+    async def _decide_read(self, principal: Principal, action: Action, resource: str) -> Decision:
         """Hành động đọc: tra policy của tài liệu nếu tài nguyên là document_id."""
         if action is Action.SEARCH:
             return Decision.allow()
@@ -121,9 +119,7 @@ class CachingPolicyDecision(PolicyDecisionPort):
         except DomainError:
             return None
 
-    def _decide_by_group(
-        self, principal: Principal, groups: list[str], action: Action
-    ) -> Decision:
+    def _decide_by_group(self, principal: Principal, groups: list[str], action: Action) -> Decision:
         """Cho phép nếu chủ thể thuộc một trong các nhóm được cấu hình."""
         if not groups:
             return Decision.deny(f"hành động {action} chưa được khai báo trong policy")

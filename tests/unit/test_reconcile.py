@@ -15,17 +15,11 @@ from document_service.adapter.outbound.fake.in_memory import (
     InMemoryIntentStore,
     InMemoryObjectStore,
 )
-from document_service.application.metadata_builder import CatalogMetadataBuilder
 from document_service.application.orchestration.snapshot import VersionSnapshot
 from document_service.application.orchestration.upload_saga import UploadSaga
 from document_service.config import Settings
 from document_service.domain.errors import DependencyUnavailableError
-from document_service.domain.model import (
-    Document,
-    DocumentMetadata,
-    DocumentVersion,
-    UploadIntent,
-)
+from document_service.domain.model import Document, DocumentMetadata, DocumentVersion, UploadIntent
 from document_service.domain.value import (
     Checksum,
     DocumentId,

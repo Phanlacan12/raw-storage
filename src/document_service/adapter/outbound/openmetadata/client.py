@@ -122,9 +122,7 @@ class OmHttpClient:
         timeouts = executor.timeouts
         self._client = httpx.AsyncClient(
             base_url=settings.base_url.rstrip("/"),
-            timeout=httpx.Timeout(
-                timeouts.read_seconds, connect=timeouts.connect_seconds
-            ),
+            timeout=httpx.Timeout(timeouts.read_seconds, connect=timeouts.connect_seconds),
         )
 
     @property

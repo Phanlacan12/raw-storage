@@ -12,10 +12,8 @@ from document_service.adapter.inbound.health.indicators import (
     IdpHealthIndicator,
     ReconcileBacklogIndicator,
 )
-from document_service.adapter.inbound.health.registry import (
-    DegradedModeGate,
-    HealthCheckRegistry,
-)
+from document_service.adapter.inbound.health.registry import DegradedModeGate, HealthCheckRegistry
+from document_service.adapter.inbound.sync.source_sync import SourceSyncJob, SourceSyncScheduler
 from document_service.adapter.outbound.fake.in_memory import (
     AllowAllPolicyDecision,
     InMemoryAuditLog,
@@ -28,47 +26,29 @@ from document_service.adapter.outbound.fake.in_memory import (
 )
 from document_service.adapter.outbound.intent.s3_manifest_store import S3ManifestIntentStore
 from document_service.adapter.outbound.intent.sqlite_store import SqliteRegistryIntentStore
-from document_service.adapter.outbound.observability.audit_log import (
-    OutboxEventPublisher,
-    StructuredAuditLogger,
-)
+from document_service.adapter.outbound.observability.audit_log import StructuredAuditLogger
 from document_service.adapter.outbound.observability.metrics import MetricsRecorder
-from document_service.adapter.outbound.policy.policy_decision import CachingPolicyDecision
-from document_service.adapter.outbound.relationship.sqlite_registry import (
-    SqliteRelationshipRegistry,
+from document_service.adapter.outbound.observability.outbox import (
+    OutboxDispatcher,
+    OutboxEventPublisher,
+    SqliteOutbox,
+    WebhookEventSender,
 )
 from document_service.adapter.outbound.openmetadata.catalog_adapter import (
     OpenMetadataCatalogAdapter,
 )
 from document_service.adapter.outbound.openmetadata.client import OmHttpClient
-from document_service.adapter.outbound.openmetadata.lineage import (
-    OmLineageRelationshipStore,
+from document_service.adapter.outbound.openmetadata.lineage import OmLineageRelationshipStore
+from document_service.adapter.outbound.policy.policy_decision import CachingPolicyDecision
+from document_service.adapter.outbound.relationship.sqlite_registry import (
+    SqliteRelationshipRegistry,
 )
 from document_service.adapter.outbound.sqlite_support import SqliteDatabase
-from document_service.adapter.outbound.storage.download import (
-    PresignedUrlIssuer,
-    ProxyStreamer,
-)
+from document_service.adapter.outbound.storage.download import PresignedUrlIssuer, ProxyStreamer
 from document_service.adapter.outbound.storage.s3_store import S3ObjectStoreAdapter
 from document_service.application.context import PolicySet, PortBundle
+from document_service.application.factory import UseCaseFactory
 from document_service.application.metadata_builder import CatalogMetadataBuilder
-from document_service.application.usecase.approve_version import ApproveVersionUseCase
-from document_service.application.usecase.create_version import CreateVersionUseCase
-from document_service.application.usecase.issue_download import IssueDownloadUseCase
-from document_service.application.usecase.register_document import RegisterDocumentUseCase
-from document_service.application.usecase.relationships import (
-    DeclareRelationshipUseCase,
-    QueryRelationshipsUseCase,
-)
-from document_service.application.usecase.search_documents import (
-    ListAuditUseCase,
-    SearchDocumentsUseCase,
-    UpdateAccessPolicyUseCase,
-)
-from document_service.adapter.inbound.sync.source_sync import (
-    SourceSyncJob,
-    SourceSyncScheduler,
-)
 from document_service.config import (
     AdapterProfile,
     IntentStoreKind,
@@ -105,6 +85,12 @@ class ServiceContainer(metaclass=SingletonMeta):
         self._ports = self._build_ports()
         self._policies = self._build_policies()
         self._builder = CatalogMetadataBuilder()
+        self._use_cases = UseCaseFactory(
+            self._ports,
+            self._policies,
+            self._settings.storage.presign_ttl_seconds,
+            self._builder,
+        )
         self._health = HealthCheckRegistry()
         self._gate = DegradedModeGate()
         self._metrics = MetricsRecorder()
@@ -138,23 +124,35 @@ class ServiceContainer(metaclass=SingletonMeta):
     def source_sync_job(self) -> SourceSyncJob:
         """Job đồng bộ từ nguồn hiện có (D17)."""
         return SourceSyncJob(
-            self.register_document(), self.create_version(), self._settings.sync
+            self._use_cases.register_document(),
+            self._use_cases.create_version(),
+            self._settings.sync,
         )
 
     def source_sync_scheduler(self) -> SourceSyncScheduler:
         """Bộ lập lịch cho job đồng bộ."""
         return SourceSyncScheduler(self.source_sync_job(), self._settings.sync)
 
-    # pylint: disable-next=too-many-public-methods
+    def outbox_dispatcher(self) -> OutboxDispatcher | None:
+        """Worker phát sự kiện cho downstream, None nếu dùng profile fake.
+
+        `WebhookEventSender` dùng executor **riêng** (`events`): downstream và outbox
+        store là hai phụ thuộc khác nhau, nên circuit breaker của bên này không được
+        làm health của bên kia báo DOWN.
+        """
+        publisher = self._ports.events
+        if isinstance(publisher, OutboxEventPublisher):
+            sender = WebhookEventSender(self._settings.events, self._executors.get("events"))
+            return OutboxDispatcher(publisher.outbox, sender, self._settings.events)
+        return None
+
     def proxy_streamer(self) -> ProxyStreamer:
         """Đường tải qua dịch vụ, dùng cho tài liệu cần thu hồi ngay (POC-23)."""
         return ProxyStreamer(self._ports.objects)
 
     def presigned_issuer(self) -> PresignedUrlIssuer:
         """Bộ cấp link tải có thời hạn cho tài liệu thông thường."""
-        return PresignedUrlIssuer(
-            self._ports.objects, self._settings.storage.presign_ttl_seconds
-        )
+        return PresignedUrlIssuer(self._ports.objects, self._settings.storage.presign_ttl_seconds)
 
     def executor(self, name: str) -> ResilientCallExecutor:
         """Executor của một phụ thuộc, dùng khi cần tạo client ngoài container."""
@@ -165,41 +163,10 @@ class ServiceContainer(metaclass=SingletonMeta):
         """Cổng chặn hành động theo chế độ suy giảm."""
         return self._gate
 
-    def register_document(self) -> RegisterDocumentUseCase:
-        """Use case đăng ký tài liệu."""
-        return RegisterDocumentUseCase(self._ports, self._builder)
-
-    def create_version(self) -> CreateVersionUseCase:
-        """Use case tạo phiên bản."""
-        return CreateVersionUseCase(self._ports, self._policies, self._builder)
-
-    def approve_version(self) -> ApproveVersionUseCase:
-        """Use case chuyển trạng thái phiên bản."""
-        return ApproveVersionUseCase(self._ports, self._policies, self._builder)
-
-    def declare_relationship(self) -> DeclareRelationshipUseCase:
-        """Use case khai báo quan hệ."""
-        return DeclareRelationshipUseCase(self._ports, self._policies)
-
-    def query_relationships(self) -> QueryRelationshipsUseCase:
-        """Use case truy vấn quan hệ."""
-        return QueryRelationshipsUseCase(self._ports)
-
-    def issue_download(self) -> IssueDownloadUseCase:
-        """Use case cấp file."""
-        return IssueDownloadUseCase(self._ports, self._settings.storage.presign_ttl_seconds)
-
-    def search_documents(self) -> SearchDocumentsUseCase:
-        """Use case tìm kiếm."""
-        return SearchDocumentsUseCase(self._ports)
-
-    def update_access_policy(self) -> UpdateAccessPolicyUseCase:
-        """Use case cập nhật chính sách truy cập."""
-        return UpdateAccessPolicyUseCase(self._ports, self._builder)
-
-    def list_audit(self) -> ListAuditUseCase:
-        """Use case đọc audit."""
-        return ListAuditUseCase(self._ports)
+    @property
+    def use_cases(self) -> UseCaseFactory:
+        """Factory dựng use case (xem application/factory.py)."""
+        return self._use_cases
 
     def reset(self) -> None:
         """Xoá registry phụ thuộc, dùng trong test."""
@@ -216,6 +183,7 @@ class ServiceContainer(metaclass=SingletonMeta):
         self._executors.register("intent_store", resilience.intent)
         self._executors.register("relationship_store", resilience.relationship)
         self._executors.register("idp", resilience.idp)
+        self._executors.register("events", resilience.events)
 
     def _build_ports(self) -> PortBundle:
         """Chọn bộ adapter theo profile."""
@@ -244,15 +212,11 @@ class ServiceContainer(metaclass=SingletonMeta):
         catalog = OpenMetadataCatalogAdapter(
             client, self._settings.catalog, self._executors.get("catalog")
         )
-        objects = S3ObjectStoreAdapter(
-            self._settings.storage, self._executors.get("object_store")
-        )
+        objects = S3ObjectStoreAdapter(self._settings.storage, self._executors.get("object_store"))
         relationships = (
             OmLineageRelationshipStore(client, self._executors.get("relationship_store"))
             if self._settings.relationship.kind is RelationshipStoreKind.LINEAGE
-            else SqliteRelationshipRegistry(
-                database, self._executors.get("relationship_store")
-            )
+            else SqliteRelationshipRegistry(database, self._executors.get("relationship_store"))
         )
         intents = (
             S3ManifestIntentStore(
@@ -270,7 +234,9 @@ class ServiceContainer(metaclass=SingletonMeta):
             objects=objects,
             intents=intents,
             policies=CachingPolicyDecision(catalog, self._settings.security),
-            events=OutboxEventPublisher(database, self._executors.get("intent_store")),
+            events=OutboxEventPublisher(
+                SqliteOutbox(database), self._executors.get("intent_store")
+            ),
             audit=StructuredAuditLogger(database, self._executors.get("intent_store")),
             locks=InMemoryDocumentLock(),
         )

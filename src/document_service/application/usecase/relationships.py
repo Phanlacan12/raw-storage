@@ -61,17 +61,13 @@ class DeclareRelationshipUseCase(WriteUseCase[DeclareRelationshipCommand, Relati
         await self._record(
             command.principal,
             "relationship.declared",
-            AuditTarget(
-                document_id="", target_id=str(command.source_version_id)
-            ),
+            AuditTarget(document_id="", target_id=str(command.source_version_id)),
             AuditOutcome.ok(f"{command.relation_type} -> {command.target_version_id}"),
         )
         return relationship
 
 
-class QueryRelationshipsUseCase(
-    ReadUseCase[QueryRelationshipsCommand, list[Relationship]]
-):
+class QueryRelationshipsUseCase(ReadUseCase[QueryRelationshipsCommand, list[Relationship]]):
     """Truy vấn quan hệ hai chiều theo loại quan hệ."""
 
     async def execute(self, command: QueryRelationshipsCommand) -> list[Relationship]:

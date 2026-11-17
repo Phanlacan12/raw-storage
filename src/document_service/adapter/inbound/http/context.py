@@ -72,9 +72,7 @@ class SearchParams:
             ("classification", self.classification),
         )
         filters = tuple(
-            SearchFilter(field_name=name, value=value)
-            for name, value in candidates
-            if value
+            SearchFilter(field_name=name, value=value) for name, value in candidates if value
         )
         return SearchQuery(
             text=self.text,
@@ -98,9 +96,7 @@ def get_write_context(
     idempotency_key: IdempotencyKey = Depends(require_idempotency_key),
 ) -> WriteContext:
     """Context cho endpoint ghi."""
-    return WriteContext(
-        container=container, principal=principal, idempotency_key=idempotency_key
-    )
+    return WriteContext(container=container, principal=principal, idempotency_key=idempotency_key)
 
 
 def get_upload_context(

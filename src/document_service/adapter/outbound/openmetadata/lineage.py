@@ -18,11 +18,7 @@ from document_service.adapter.outbound.openmetadata import endpoints
 from document_service.adapter.outbound.openmetadata.client import OmHttpClient
 from document_service.domain.model import Relationship
 from document_service.domain.port import RelationshipStorePort
-from document_service.domain.value import (
-    Direction,
-    DocumentVersionId,
-    RelationType,
-)
+from document_service.domain.value import Direction, DocumentVersionId, RelationType
 from document_service.infrastructure.health import DependencyKind, HealthResult
 from document_service.infrastructure.resilience.executor import ResilientCallExecutor
 

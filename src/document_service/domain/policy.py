@@ -16,12 +16,7 @@ from document_service.domain.errors import (
     RelationshipRebindError,
     StatusTransitionError,
 )
-from document_service.domain.model import (
-    ApprovalResult,
-    Document,
-    DocumentVersion,
-    Relationship,
-)
+from document_service.domain.model import ApprovalResult, Document, DocumentVersion, Relationship
 from document_service.domain.value import (
     Actor,
     Checksum,
@@ -70,9 +65,7 @@ class DedupPolicy(DomainPolicy):
         existing = self.duplicate_of(document, checksum)
         self._require(
             existing is None,
-            DuplicateContentError(
-                f"nội dung đã có trong tài liệu {document.document_id}"
-            ),
+            DuplicateContentError(f"nội dung đã có trong tài liệu {document.document_id}"),
         )
 
 

@@ -12,10 +12,7 @@ from typing import Awaitable, Callable, TypeVar
 
 from document_service.config import DependencyResiliencePolicy
 from document_service.domain.errors import DependencyUnavailableError
-from document_service.infrastructure.resilience.breaker import (
-    Bulkhead,
-    CircuitBreaker,
-)
+from document_service.infrastructure.resilience.breaker import Bulkhead, CircuitBreaker
 from document_service.infrastructure.resilience.deadline import Deadline, TimeoutPolicy
 from document_service.infrastructure.resilience.retry import (
     BackoffStrategy,
@@ -99,9 +96,7 @@ class ResilientCallExecutor:
         async with self._bulkhead:
             return await self._attempt_loop(operation, effective_deadline)
 
-    async def _attempt_loop(
-        self, operation: Callable[[], Awaitable[T]], deadline: Deadline
-    ) -> T:
+    async def _attempt_loop(self, operation: Callable[[], Awaitable[T]], deadline: Deadline) -> T:
         """Vòng thử lại cho tới khi thành công, hết lượt hoặc hết deadline."""
         last_error: ClassifiedError | None = None
         for attempt in range(1, self._retry.max_attempts + 1):
@@ -119,9 +114,7 @@ class ResilientCallExecutor:
                     break
         raise self._exhausted(last_error)
 
-    async def _single_call(
-        self, operation: Callable[[], Awaitable[T]], deadline: Deadline
-    ) -> T:
+    async def _single_call(self, operation: Callable[[], Awaitable[T]], deadline: Deadline) -> T:
         """Một lần gọi, có timeout không vượt phần còn lại của deadline."""
         timeout = deadline.slice_for(self._timeouts.read_seconds)
         try:

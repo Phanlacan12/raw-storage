@@ -24,11 +24,7 @@ from document_service.application.orchestration.upload_saga import UploadSaga
 from document_service.config import Settings, get_settings
 from document_service.domain.errors import DomainError
 from document_service.domain.model import UploadIntent
-from document_service.domain.port import (
-    IntentStorePort,
-    MetadataCatalogPort,
-    ObjectStorePort,
-)
+from document_service.domain.port import IntentStorePort, MetadataCatalogPort, ObjectStorePort
 from document_service.domain.value import DocumentId, IntentState
 from document_service.infrastructure.container import ServiceContainer
 from document_service.utils.logging_setup import get_logger

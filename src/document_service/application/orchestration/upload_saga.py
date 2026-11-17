@@ -12,11 +12,7 @@ from typing import Any, AsyncIterator, Callable
 from document_service.application.orchestration.snapshot import VersionSnapshot
 from document_service.domain.dto import PutResult
 from document_service.domain.model import DocumentVersion, UploadIntent
-from document_service.domain.port import (
-    IntentStorePort,
-    MetadataCatalogPort,
-    ObjectStorePort,
-)
+from document_service.domain.port import IntentStorePort, MetadataCatalogPort, ObjectStorePort
 from document_service.domain.value import IntentState
 from document_service.utils.logging_setup import get_logger
 

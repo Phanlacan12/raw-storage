@@ -15,7 +15,6 @@ from document_service.domain.errors import (
     StatusTransitionError,
     VersionLabelConflictError,
 )
-from document_service.utils.clock import utc_now
 from document_service.domain.value import (
     Action,
     Actor,
@@ -30,6 +29,7 @@ from document_service.domain.value import (
     StorageUri,
     VersionLabel,
 )
+from document_service.utils.clock import utc_now
 
 
 def _now() -> datetime:

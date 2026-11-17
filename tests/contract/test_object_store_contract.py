@@ -54,9 +54,7 @@ def object_store(request: pytest.FixtureRequest) -> ObjectStorePort:
     if request.param == "in_memory":
         return InMemoryObjectStore()
     request.getfixturevalue("moto_s3")
-    settings = StorageSettings(
-        endpoint="", bucket=BUCKET, access_key="test", secret_key="test"
-    )
+    settings = StorageSettings(endpoint="", bucket=BUCKET, access_key="test", secret_key="test")
     executor = ResilientCallExecutor("object_store", DependencyResiliencePolicy())
     return S3ObjectStoreAdapter(settings, executor)
 
