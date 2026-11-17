@@ -25,6 +25,9 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "black>=25.9.0",
+    "flake8>=7.3.0",
+    "isort>=6.0.1",
     "moto[s3]>=5.2.5",
     "mypy>=2.4.1",
     "pre-commit>=4.7.0",
@@ -35,6 +38,11 @@ dev = [
     "respx>=0.23.1",
     "types-boto3>=1.44.3",
 ]
+
+[tool.black]
+# black chỉ đọc cấu hình từ pyproject.toml. Giữ 100 cho khớp .flake8/.pylintrc.
+line-length = 100
+target-version = ["py312"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

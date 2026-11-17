@@ -1,0 +1,31 @@
+# flake8 chạy song song với pylint: flake8 bắt lỗi cú pháp/style nhanh
+# (pycodestyle + pyflakes), pylint lo phần design/refactor.
+# max-line-length giữ 100 cho khớp [FORMAT] trong .pylintrc.
+[flake8]
+max-line-length = 100
+max-complexity = 12
+
+# E203: pycodestyle lệch chuẩn với slice (`x[1 :]`), khuyến nghị tắt.
+# W503/W504: hai luật loại trừ nhau về chỗ đặt toán tử khi ngắt dòng.
+extend-ignore = E203, W503, W504
+
+exclude =
+    .git,
+    .venv,
+    venv,
+    __pycache__,
+    .mypy_cache,
+    .pytest_cache,
+    node_modules,
+    build,
+    dist,
+    *.egg-info
+
+per-file-ignores =
+    # __init__.py chủ ý re-export, không coi là import thừa.
+    __init__.py: F401
+    # Test được phép dùng import trong hàm và dòng dài hơn chút.
+    tests/*: E402
+
+count = True
+statistics = True

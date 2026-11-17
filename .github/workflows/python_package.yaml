@@ -86,14 +86,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          echo "--- isort ---"
+          uv run isort --check-only --diff src tests examples setup.py
+          echo "--- black ---"
+          uv run black --check --diff src tests examples setup.py
           echo "--- mypy ---"
           uv run mypy src
           echo "--- pytest ---"
           uv run pytest -s --durations=0 --disable-warnings tests/ --cov=src --cov-report=xml
+          echo "--- flake8 ---"
+          uv run flake8 src tests examples setup.py
           echo "--- pylint ---"
           INCLUDED_FILES=$(find src -type f -name "*.py")
           echo "Pylint tren $(echo "$INCLUDED_FILES" | wc -w) file"
           uv run pylint $INCLUDED_FILES
+
+      - name: Run examples
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Ví dụ dùng chính code trong src/, nên bước này bắt được hồi quy mà test
+          # đơn vị bỏ sót: wiring container, lifespan, và luồng qua HTTP thật.
+          uv run python examples/run_all.py
 
       - name: Upload coverage
         if: always()
