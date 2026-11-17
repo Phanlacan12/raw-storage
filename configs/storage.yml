@@ -1,0 +1,12 @@
+# Object Storage tương thích S3. Chỉ dùng API S3 chuẩn (mục 3.8 báo cáo).
+# BÍ MẬT: access_key/secret_key truyền qua DS_STORAGE__ACCESS_KEY, DS_STORAGE__SECRET_KEY.
+storage:
+  endpoint: http://localhost:9000
+  bucket: raw-documents
+  region: us-east-1
+  # Quy ước object key: {object_prefix}/{document_id}/{document_version_id}/source
+  object_prefix: objects
+  # Thời hạn link tải. Link đã cấp KHÔNG tự mất hiệu lực khi quyền đổi (POC-23),
+  # tài liệu cần thu hồi ngay phải dùng proxy qua dịch vụ.
+  presign_ttl_seconds: 300
+  multipart_threshold_bytes: 16777216

@@ -1,0 +1,7 @@
+# Mức log và định dạng. Màu terminal do utils/logging_setup.py quyết định,
+# tự tắt khi đầu ra không phải TTY hoặc khi có biến NO_COLOR.
+# Ghi đè: DS_LOGGING__LEVEL, DS_LOGGING__JSON_FORMAT
+logging:
+  level: INFO
+  # true = một dòng JSON mỗi bản ghi, dùng khi chạy thật để log tập trung thu được
+  json_format: false

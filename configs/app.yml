@@ -1,0 +1,10 @@
+# Cấu hình chung của Document Service.
+# Ghi đè bằng biến môi trường: DS_APP__<FIELD>, ví dụ DS_APP__PROFILE=openmetadata
+app:
+  # fake = chạy bằng adapter in-memory, không cần hạ tầng
+  # openmetadata = dùng OpenMetadata + Object Storage thật
+  profile: fake
+  service_name: document-service
+  api_prefix: /api/v1
+  # Deadline cho một request, lan truyền xuống mọi lời gọi ra ngoài (mục 11.3)
+  request_budget_seconds: 10.0

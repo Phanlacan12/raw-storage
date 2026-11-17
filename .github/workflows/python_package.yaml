@@ -1,0 +1,104 @@
+name: Document Service CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check line count
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Kiem tra so dong moi file"
+          MAX_LINES=1000
+          while IFS= read -r file; do
+            base="$(basename "$file")"
+            [[ "$base" =~ ^[Rr][Ee][Aa][Dd][Mm][Ee] ]] && continue
+            line_count=$(wc -l < "$file")
+            if [ "$line_count" -gt "$MAX_LINES" ]; then
+              echo "::error file=$file::File $file co $line_count dong, vuot nguong $MAX_LINES."
+              exit 1
+            fi
+          done < <(git ls-files | grep -v '^tests/' | grep -v '^docs/' | grep -v '\.ipynb$' | grep -v '^\.pylintrc$' | grep -v '\.lock$')
+
+      - name: Check lines of code changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          MAX_CHANGE_LINES=1500
+          BASE_BRANCH=main
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            PR_BASE=$(jq -r .pull_request.base.ref "$GITHUB_EVENT_PATH")
+            BASE_BRANCH="${PR_BASE:-main}"
+          fi
+          echo "So sanh thay doi voi '$BASE_BRANCH'"
+          git fetch origin "$BASE_BRANCH" --depth=1 || true
+          if git rev-parse "origin/$BASE_BRANCH" >/dev/null 2>&1; then
+            DIFF_RANGE="origin/$BASE_BRANCH..HEAD"
+          else
+            DIFF_RANGE="HEAD^1..HEAD"
+          fi
+          CHANGES=$(git diff --numstat "$DIFF_RANGE" \
+            | grep -v '\.ipynb$' \
+            | awk '$3 !~ /^docs\// && $3 !~ /\.lock$/ {added+=$1; deleted+=$2} END {print added+deleted}')
+          if [ -n "${CHANGES:-}" ] && [ "$CHANGES" -gt "$MAX_CHANGE_LINES" ]; then
+            echo "::error::Qua nhieu thay doi: $CHANGES dong. Toi da $MAX_CHANGE_LINES."
+            exit 1
+          fi
+          echo "So dong thay doi: ${CHANGES:-0}"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras --dev
+
+      - name: Make test
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "--- mypy ---"
+          uv run mypy src
+          echo "--- pytest ---"
+          uv run pytest -s --durations=0 --disable-warnings tests/ --cov=src --cov-report=xml
+          echo "--- pylint ---"
+          INCLUDED_FILES=$(find src -type f -name "*.py")
+          echo "Pylint tren $(echo "$INCLUDED_FILES" | wc -w) file"
+          uv run pylint $INCLUDED_FILES
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.python-version }}
+          path: coverage.xml
+          if-no-files-found: ignore

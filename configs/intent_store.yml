@@ -1,0 +1,11 @@
+# Intent store — quyết định Q2 còn mở, chốt sau POC-18, 21, 22.
+# kind: sqlite (registry database) hoặc s3_manifest (manifest trên Object Storage)
+intent:
+  kind: sqlite
+  sqlite_path: local_data/document_service.sqlite
+  manifest_prefix: intents
+  # Job đối soát: chu kỳ chạy và ngưỡng coi một intent là dở dang
+  reconcile_interval_seconds: 30.0
+  stale_after_seconds: 60.0
+  # Vượt ngưỡng retry thì chuyển Failed, cảnh báo và xử lý thủ công
+  max_retry_before_failed: 5

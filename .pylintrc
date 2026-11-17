@@ -1,0 +1,89 @@
+# Cấu hình pylint theo khuôn Phanlacan12/CoreTrainingTimeSeries,
+# điều chỉnh py-version sang 3.12 cho khớp .python-version.
+
+[MAIN]
+fail-under=10
+jobs=1
+persistent=yes
+py-version=3.12
+load-plugins=
+fail-on=
+ignore=CVS
+ignore-paths=
+ignore-patterns=^\.#
+
+[MESSAGES CONTROL]
+disable=raw-checker-failed,
+        bad-inline-option,
+        locally-disabled,
+        file-ignored,
+        suppressed-message,
+        useless-suppression,
+        deprecated-pragma,
+        use-implicit-booleaness-not-comparison-to-string,
+        use-implicit-booleaness-not-comparison-to-zero,
+        use-symbolic-message-instead,
+        R0903,
+        R0902,
+        W0718,
+        C0114,
+
+[REPORTS]
+reports=no
+score=yes
+
+[FORMAT]
+max-line-length=100
+max-module-lines=1000
+indent-string='    '
+indent-after-paren=4
+single-line-if-stmt=no
+
+[DESIGN]
+max-args=5
+max-attributes=7
+max-branches=12
+max-locals=15
+max-statements=50
+max-returns=6
+min-public-methods=2
+max-public-methods=20
+max-bool-expr=5
+max-parents=7
+
+[REFACTORING]
+max-nested-blocks=5
+never-returning-functions=sys.exit,argparse.parse_error
+
+[BASIC]
+good-names=i,j,k,ex,Run,_
+bad-names=foo,bar,baz,toto,tutu,tata
+argument-naming-style=snake_case
+attr-naming-style=snake_case
+function-naming-style=snake_case
+method-naming-style=snake_case
+variable-naming-style=snake_case
+module-naming-style=snake_case
+class-naming-style=PascalCase
+const-naming-style=UPPER_CASE
+docstring-min-length=-1
+
+[SIMILARITIES]
+min-similarity-lines=4
+ignore-comments=yes
+ignore-docstrings=yes
+ignore-imports=yes
+ignore-signatures=yes
+
+[TYPECHECK]
+ignore-none=yes
+ignore-on-opaque-inference=yes
+ignored-checks-for-mixins=no-member,not-async-context-manager,not-context-manager,attribute-defined-outside-init
+
+[VARIABLES]
+allow-global-unused-variables=yes
+dummy-variables-rgx=_+$|(_[a-zA-Z0-9_]*[a-zA-Z0-9]+?$)|dummy|^ignored_|^unused_
+init-import=no
+
+[EXCEPTIONS]
+overgeneral-exceptions=builtins.BaseException,builtins.Exception

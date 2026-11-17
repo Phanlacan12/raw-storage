@@ -1,0 +1,12 @@
+# Health check (mục 10 của docs/c4-04b-code-structure.md).
+# /livez KHÔNG chạm phụ thuộc ngoài; /readyz tổng hợp theo nhóm phụ thuộc.
+health:
+  # Kết quả health được cache để probe không thành nguồn tải lên phụ thuộc
+  cache_ttl_seconds: 5.0
+  probe_timeout_seconds: 2.0
+  # Số intent dở dang khiến ReconcileBacklogIndicator báo DEGRADED
+  backlog_threshold: 20
+  # Hạn chót để migration schema xong, quá hạn thì tiến trình thoát
+  startup_deadline_seconds: 120.0
+  # /internal/healthz/deps chỉ nên bật trong mạng nội bộ
+  expose_details: true

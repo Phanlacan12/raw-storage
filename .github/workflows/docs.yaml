@@ -1,0 +1,62 @@
+name: Docs check
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "docs/**"
+      - ".github/workflows/docs.yaml"
+  pull_request:
+    paths:
+      - "docs/**"
+      - ".github/workflows/docs.yaml"
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  mermaid:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install mermaid parser
+        run: npm install --no-save mermaid@11.12.0 jsdom@26.1.0
+
+      - name: Parse every mermaid diagram
+        run: node docs/tools/check-mermaid.mjs docs | tee mermaid.log
+
+      - name: Fail if any diagram is broken
+        run: |
+          set -euo pipefail
+          if ! grep -q "^0 diagram lỗi" mermaid.log; then
+            echo "::error::Co so do mermaid loi, xem mermaid.log"
+            exit 1
+          fi
+
+      - name: Check internal links
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          while IFS= read -r file; do
+            while IFS= read -r target; do
+              [ -z "$target" ] && continue
+              path="$(dirname "$file")/${target%%#*}"
+              if [ ! -e "$path" ]; then
+                echo "::error file=$file::Link noi bo khong ton tai: $target"
+                status=1
+              fi
+            done < <(grep -oE '\]\(([^)]+\.(md|mjs))' "$file" | sed 's/^](//')
+          done < <(find docs -name "*.md")
+          exit $status

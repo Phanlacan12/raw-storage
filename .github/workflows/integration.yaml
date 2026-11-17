@@ -1,0 +1,61 @@
+name: Integration (OpenMetadata + Object Storage)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras --dev
+
+      - name: Start infrastructure
+        run: |
+          cp deploy/.env.example deploy/.env
+          docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d
+
+      - name: Wait for OpenMetadata
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            if curl -sf http://localhost:8586/healthcheck >/dev/null; then
+              echo "catalog san sang sau $attempt lan thu"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::OpenMetadata khong san sang"
+          exit 1
+
+      - name: Run integration tests
+        env:
+          DS_APP__PROFILE: openmetadata
+          DS_CATALOG__BASE_URL: http://localhost:8585
+          DS_STORAGE__ENDPOINT: http://localhost:8333
+          DS_STORAGE__BUCKET: raw-documents
+          DS_STORAGE__ACCESS_KEY: dev-access-key
+          DS_STORAGE__SECRET_KEY: dev-secret-key
+        run: uv run pytest tests/integration -v
+
+      - name: Collect logs on failure
+        if: failure()
+        run: docker compose -f deploy/docker-compose.yml logs --tail=200
+
+      - name: Stop infrastructure
+        if: always()
+        run: docker compose -f deploy/docker-compose.yml down -v

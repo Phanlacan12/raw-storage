@@ -1,0 +1,50 @@
+[project]
+name = "document-service"
+version = "0.1.0"
+description = "Kho raw data dung chung - Document Service (OpenMetadata + Object Storage S3)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "boto3>=1.44.4",
+    "fastapi>=0.163.1",
+    "httpx>=0.28.1",
+    "pydantic>=2.14.3",
+    "pydantic-settings>=2.16.3",
+    "pyjwt[crypto]>=2.15.1",
+    "python-multipart>=0.0.34",
+    "pyyaml>=6.0.3",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[project.scripts]
+document-service = "document_service.main:cli"
+
+[build-system]
+requires = ["uv_build>=0.13.8,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "moto[s3]>=5.2.5",
+    "mypy>=2.4.1",
+    "pre-commit>=4.7.0",
+    "pylint>=4.1.4",
+    "pytest>=9.2.0",
+    "pytest-asyncio>=1.5.0",
+    "pytest-cov>=7.1.0",
+    "respx>=0.23.1",
+    "types-boto3>=1.44.3",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-q"
+markers = [
+    "integration: can ha tang that (OpenMetadata/S3), skip neu thieu bien moi truong",
+]
+
+[tool.coverage.run]
+source = ["src/document_service"]
+branch = true

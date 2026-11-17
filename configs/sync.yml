@@ -1,0 +1,23 @@
+# Đồng bộ từ nguồn tài liệu hiện có (D17 Sync Orchestrator).
+# Connector của catalog KHÔNG được dùng làm đường ghi chính (mục 3.4, 6.4 báo cáo):
+# mọi file đi qua Document Service để giữ bất biến về phiên bản và quyền.
+sync:
+  # Mặc định tắt: chỉ bật khi đã khảo sát nguồn và ánh xạ được quyền
+  enabled: false
+  interval_seconds: 300.0
+  batch_size: 50
+
+  # Mỗi nguồn một mục. allowed_groups là ánh xạ quyền từ nguồn sang kho;
+  # để trống nghĩa là chưa ánh xạ được → tài liệu ở chế độ hạn chế (bất biến I11).
+  sources: []
+  # Ví dụ:
+  # sources:
+  #   - source_id: file-share-ktht
+  #     source_type: filesystem
+  #     root_path: /mnt/fileshare/du-an
+  #     collection_id: PROJECT-A
+  #     document_type: SRS
+  #     classification: internal
+  #     allowed_groups:
+  #       - du-an-a-members
+  #     file_extensions: [".pdf", ".docx", ".xlsx", ".pptx", ".md"]

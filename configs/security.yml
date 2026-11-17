@@ -1,0 +1,21 @@
+# Định danh và phân quyền. Dùng IdP/SSO của tổ chức, không tạo hệ tài khoản riêng.
+security:
+  # true chỉ dành cho phát triển cục bộ và test
+  auth_disabled: true
+  oidc_jwks_url: ""
+  oidc_issuer: ""
+  oidc_audience: document-service
+  # Nhóm quản trị kho: toàn quyền, kể cả xem tài liệu chưa ánh xạ được quyền
+  admin_groups:
+    - document-admins
+  # Nhóm được tạo tài liệu và phiên bản mới
+  writer_groups:
+    - document-writers
+  # Nhóm được chuyển trạng thái phiên bản (workflow xét duyệt nằm ngoài kho)
+  approver_groups:
+    - document-approvers
+  # Mọi endpoint ghi bắt buộc có header Idempotency-Key (bất biến I13)
+  require_idempotency_key: true
+  # TTL cache policy, cũng là hạn dùng của chế độ DOWNLOAD_ONLY (mục 10.4)
+  policy_cache_ttl_seconds: 300
+  lock_timeout_seconds: 5.0

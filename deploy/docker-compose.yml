@@ -1,0 +1,93 @@
+# Hạ tầng CHỈ DÙNG CHO PHÁT TRIỂN và PoC.
+# Production theo docs/c4-06-deployment.md mục 6.6: ưu tiên dịch vụ S3-compatible
+# sẵn có của tổ chức, và MinIO OSS bản cũ không dùng cho triển khai mới.
+name: raw-storage-dev
+
+services:
+  mysql:
+    image: mysql:8.0.35
+    container_name: rs-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-password}
+      MYSQL_DATABASE: openmetadata_db
+      MYSQL_USER: openmetadata_user
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-openmetadata_password}
+    command: --sort_buffer_size=10M --max_connections=300
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-password}"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    ports:
+      - "3306:3306"
+
+  opensearch:
+    image: opensearchproject/opensearch:2.19.0
+    container_name: rs-opensearch
+    environment:
+      - discovery.type=single-node
+      - plugins.security.disabled=true
+      - OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g
+      - DISABLE_INSTALL_DEMO_CONFIG=true
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q '\"status\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    ports:
+      - "9200:9200"
+
+  openmetadata:
+    image: docker.getcollate.io/openmetadata/server:1.12.0
+    container_name: rs-openmetadata
+    depends_on:
+      mysql:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+    environment:
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      OM_DATABASE: openmetadata_db
+      DB_USER: openmetadata_user
+      DB_USER_PASSWORD: ${MYSQL_PASSWORD:-openmetadata_password}
+      SEARCH_TYPE: opensearch
+      ELASTICSEARCH_HOST: opensearch
+      ELASTICSEARCH_PORT: "9200"
+      ELASTICSEARCH_SCHEME: http
+      AUTHORIZER_CLASS_NAME: org.openmetadata.service.security.DefaultAuthorizer
+      AUTHENTICATION_PROVIDER: basic
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:8586/healthcheck | grep -q healthy"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+    ports:
+      - "8585:8585"
+      - "8586:8586"
+
+  # Object Storage tương thích S3 cho môi trường dev.
+  # SeaweedFS được chọn vì còn được bảo trì và chỉ cần API S3 chuẩn.
+  objectstore:
+    image: chrislusf/seaweedfs:3.68
+    container_name: rs-objectstore
+    command: server -s3 -dir=/data -master.volumeSizeLimitMB=256
+    volumes:
+      - objectstore-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:8333 >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    ports:
+      - "8333:8333"
+      - "9333:9333"
+
+volumes:
+  mysql-data:
+  opensearch-data:
+  objectstore-data:

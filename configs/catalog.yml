@@ -1,0 +1,17 @@
+# OpenMetadata — catalog đã chốt ở quyết định Q1.
+# BÍ MẬT: bot_token KHÔNG đặt ở đây, truyền qua DS_CATALOG__BOT_TOKEN.
+catalog:
+  base_url: http://localhost:8585
+  # Phiên bản được cố định; health check báo DEGRADED nếu server lệch bản này
+  # (OmApiVersionPin, mục 15 của docs/c4-04b-code-structure.md)
+  pinned_version: ""
+  drive_service_name: raw-documents
+  root_directory: documents
+  # Custom property bắt buộc phải lọc được qua Search API (POC-19).
+  # OmSchemaMigration fail fast nếu thiếu hoặc không index được.
+  required_properties:
+    - document_type
+    - status
+    - classification
+    - collection_id
+    - version_label

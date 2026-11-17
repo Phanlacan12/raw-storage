@@ -1,0 +1,5 @@
+# Relationship store — quyết định Q4 còn mở, chốt sau POC-06, POC-09.
+# kind: lineage (OpenMetadata Lineage API) hoặc sqlite (registry riêng)
+relationship:
+  kind: sqlite
+  sqlite_path: local_data/document_service.sqlite
