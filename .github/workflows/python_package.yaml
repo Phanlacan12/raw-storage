@@ -32,14 +32,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "Kiem tra so dong moi file"
+          echo "Checking line count for each file"
           MAX_LINES=1000
           while IFS= read -r file; do
             base="$(basename "$file")"
             [[ "$base" =~ ^[Rr][Ee][Aa][Dd][Mm][Ee] ]] && continue
             line_count=$(wc -l < "$file")
             if [ "$line_count" -gt "$MAX_LINES" ]; then
-              echo "::error file=$file::File $file co $line_count dong, vuot nguong $MAX_LINES."
+              echo "::error file=$file::File $file has $line_count lines, over the $MAX_LINES limit."
               exit 1
             fi
           done < <(git ls-files | grep -v '^tests/' | grep -v '^docs/' | grep -v '\.ipynb$' | grep -v '^\.pylintrc$' | grep -v '\.lock$')
@@ -48,13 +48,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Raised while the foundation is still being built; lower it once
+          # the codebase stabilises.
           MAX_CHANGE_LINES=5000
           BASE_BRANCH=main
           if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
             PR_BASE=$(jq -r .pull_request.base.ref "$GITHUB_EVENT_PATH")
             BASE_BRANCH="${PR_BASE:-main}"
           fi
-          echo "So sanh thay doi voi '$BASE_BRANCH'"
+          echo "Comparing changes against '$BASE_BRANCH'"
           git fetch origin "$BASE_BRANCH" --depth=1 || true
           if git rev-parse "origin/$BASE_BRANCH" >/dev/null 2>&1; then
             DIFF_RANGE="origin/$BASE_BRANCH..HEAD"
@@ -65,10 +67,10 @@ jobs:
             | grep -v '\.ipynb$' \
             | awk '$3 !~ /^docs\// && $3 !~ /\.lock$/ {added+=$1; deleted+=$2} END {print added+deleted}')
           if [ -n "${CHANGES:-}" ] && [ "$CHANGES" -gt "$MAX_CHANGE_LINES" ]; then
-            echo "::error::Qua nhieu thay doi: $CHANGES dong. Toi da $MAX_CHANGE_LINES."
+            echo "::error::Too many changes: $CHANGES lines. The maximum is $MAX_CHANGE_LINES."
             exit 1
           fi
-          echo "So dong thay doi: ${CHANGES:-0}"
+          echo "Lines changed: ${CHANGES:-0}"
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
@@ -86,21 +88,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          echo "--- isort ---"
+          uv run isort --check-only --diff src tests examples setup.py
+          echo "--- black ---"
+          uv run black --check --diff src tests examples setup.py
           echo "--- mypy ---"
           uv run mypy src
           echo "--- pytest ---"
           uv run pytest -s --durations=0 --disable-warnings tests/ --cov=src --cov-report=xml
+          echo "--- flake8 ---"
+          uv run flake8 src tests examples setup.py
           echo "--- pylint ---"
           INCLUDED_FILES=$(find src -type f -name "*.py")
-          echo "Pylint tren $(echo "$INCLUDED_FILES" | wc -w) file"
+          echo "Running pylint on $(echo "$INCLUDED_FILES" | wc -w) files"
           uv run pylint $INCLUDED_FILES
 
       - name: Run examples
         shell: bash
         run: |
           set -euo pipefail
-          # Ví dụ dùng chính code trong src/, nên bước này bắt được hồi quy mà test
-          # đơn vị bỏ sót: wiring container, lifespan, và luồng qua HTTP thật.
+          # The examples run against the real code in src/, so this step catches
+          # regressions the unit tests miss: container wiring, lifespan, and the
+          # full path through HTTP.
           uv run python examples/run_all.py
 
       - name: Upload coverage
