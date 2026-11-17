@@ -45,6 +45,9 @@ jobs:
           done < <(git ls-files | grep -v '^tests/' | grep -v '^docs/' | grep -v '\.ipynb$' | grep -v '^\.pylintrc$' | grep -v '\.lock$')
 
       - name: Check lines of code changes
+        # Only meaningful on a pull request: on a push to main, HEAD and
+        # origin/main are the same commit, so there is nothing to compare.
+        if: github.event_name == 'pull_request'
         shell: bash
         run: |
           set -euo pipefail
@@ -63,10 +66,12 @@ jobs:
           else
             DIFF_RANGE="HEAD^1..HEAD"
           fi
+          # One awk, no grep: grep exits 1 when it matches nothing, which under
+          # `set -o pipefail` fails the whole step on an empty diff. `+0` keeps
+          # the output a number even when awk sees no rows at all.
           CHANGES=$(git diff --numstat "$DIFF_RANGE" \
-            | grep -v '\.ipynb$' \
-            | awk '$3 !~ /^docs\// && $3 !~ /\.lock$/ {added+=$1; deleted+=$2} END {print added+deleted}')
-          if [ -n "${CHANGES:-}" ] && [ "$CHANGES" -gt "$MAX_CHANGE_LINES" ]; then
+            | awk '$3 !~ /\.ipynb$/ && $3 !~ /^docs\// && $3 !~ /\.lock$/ {added+=$1; deleted+=$2} END {print added+deleted+0}')
+          if [ "$CHANGES" -gt "$MAX_CHANGE_LINES" ]; then
             echo "::error::Too many changes: $CHANGES lines. The maximum is $MAX_CHANGE_LINES."
             exit 1
           fi
