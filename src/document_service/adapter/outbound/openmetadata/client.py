@@ -90,13 +90,13 @@ class OmErrorTranslator:
         retry_after = self._retry_after(response)
         return ClassifiedError(
             error_class,
-            f"OpenMetadata trả {response.status_code}: {response.text[:200]}",
+            f"OpenMetadata returned {response.status_code}: {response.text[:200]}",
             retry_after,
         )
 
     def translate_transport(self, error: httpx.HTTPError) -> ClassifiedError:
         """Lỗi tầng vận chuyển luôn là lỗi tạm thời."""
-        return ClassifiedError(ErrorClass.RETRYABLE_TRANSIENT, f"lỗi kết nối: {error}")
+        return ClassifiedError(ErrorClass.RETRYABLE_TRANSIENT, f"connection error: {error}")
 
     def _retry_after(self, response: httpx.Response) -> float | None:
         """Đọc header Retry-After nếu server có gửi."""
@@ -122,9 +122,7 @@ class OmHttpClient:
         timeouts = executor.timeouts
         self._client = httpx.AsyncClient(
             base_url=settings.base_url.rstrip("/"),
-            timeout=httpx.Timeout(
-                timeouts.read_seconds, connect=timeouts.connect_seconds
-            ),
+            timeout=httpx.Timeout(timeouts.read_seconds, connect=timeouts.connect_seconds),
         )
 
     @property
@@ -203,7 +201,7 @@ class OmHttpClient:
         try:
             payload = response.json()
         except ValueError:
-            _LOGGER.warning("body không phải JSON", extra={"status": response.status_code})
+            _LOGGER.warning("body is not JSON", extra={"status": response.status_code})
             return {}
         if isinstance(payload, dict):
             return payload

@@ -15,7 +15,6 @@ from document_service.domain.errors import (
     StatusTransitionError,
     VersionLabelConflictError,
 )
-from document_service.utils.clock import utc_now
 from document_service.domain.value import (
     Action,
     Actor,
@@ -30,6 +29,7 @@ from document_service.domain.value import (
     StorageUri,
     VersionLabel,
 )
+from document_service.utils.clock import utc_now
 
 
 def _now() -> datetime:
@@ -127,7 +127,7 @@ class DocumentVersion:
         """Chuyển sang Approved, chỉ hợp lệ từ Draft (bất biến I4)."""
         if self.status is not DocumentStatus.DRAFT:
             raise StatusTransitionError(
-                f"chỉ duyệt được bản Draft, phiên bản {self.version_id} đang {self.status}"
+                f"only Draft versions can be approved, version {self.version_id} is {self.status}"
             )
         self.status = DocumentStatus.APPROVED
         self.approved_at = when or _now()
@@ -136,7 +136,7 @@ class DocumentVersion:
     def mark_obsolete(self, actor: Actor, when: datetime | None = None) -> None:
         """Chuyển sang Obsolete từ Draft hoặc Approved."""
         if self.status is DocumentStatus.OBSOLETE:
-            raise StatusTransitionError(f"phiên bản {self.version_id} đã Obsolete")
+            raise StatusTransitionError(f"version {self.version_id} is already Obsolete")
         self.status = DocumentStatus.OBSOLETE
         self.approved_by = self.approved_by or actor.principal_id
         self.approved_at = self.approved_at or when
@@ -166,13 +166,13 @@ class Document:
         """Bảo đảm version_label chưa tồn tại trong tài liệu (bất biến I2)."""
         if any(version.label == label for version in self.versions):
             raise VersionLabelConflictError(
-                f"version_label {label} đã tồn tại trong {self.document_id}"
+                f"version_label {label} already exists in {self.document_id}"
             )
 
     def add_version(self, version: DocumentVersion) -> DocumentVersion:
         """Thêm một phiên bản nội dung mới vào tài liệu."""
         if version.document_id != self.document_id:
-            raise StatusTransitionError("phiên bản không thuộc tài liệu này")
+            raise StatusTransitionError("version does not belong to this document")
         self.assert_label_unique(version.label)
         self.versions.append(version)
         return version
@@ -182,7 +182,7 @@ class Document:
         for version in self.versions:
             if version.version_id == version_id:
                 return version
-        raise DocumentNotFoundError(f"không có phiên bản {version_id} trong {self.document_id}")
+        raise DocumentNotFoundError(f"no version {version_id} in {self.document_id}")
 
     def current_approved(self) -> DocumentVersion | None:
         """Phiên bản Approved hiện hành, hoặc None nếu chưa có bản nào được duyệt."""
@@ -191,7 +191,7 @@ class Document:
             return None
         if len(approved) > 1:
             raise StatusTransitionError(
-                f"tài liệu {self.document_id} có {len(approved)} bản Approved"
+                f"document {self.document_id} has {len(approved)} Approved versions"
             )
         return approved[0]
 
@@ -216,7 +216,7 @@ class Document:
         target = self.find_version(version_id)
         previous = self.current_approved()
         if previous is not None and previous.version_id == version_id:
-            raise StatusTransitionError(f"phiên bản {version_id} đã là bản hiện hành")
+            raise StatusTransitionError(f"version {version_id} is already the current one")
         target.mark_approved(actor)
         if previous is not None:
             previous.mark_obsolete(actor)
@@ -245,7 +245,7 @@ class Relationship:
     def assert_both_ends_are_versions(self) -> None:
         """Hai đầu quan hệ phải là phiên bản khác nhau."""
         if self.source_version_id == self.target_version_id:
-            raise RelationshipRebindError("quan hệ không thể trỏ về chính phiên bản đó")
+            raise RelationshipRebindError("a relationship cannot point back to the same version")
 
     def reversed_direction(self) -> Relationship:
         """Bản ghi quan hệ theo chiều ngược, dùng khi trả kết quả hai chiều."""
@@ -278,7 +278,7 @@ class UploadIntent:
         """Cập nhật trạng thái xử lý, không cho quay lại từ trạng thái kết thúc."""
         if self.state.is_terminal and state is not self.state:
             raise StatusTransitionError(
-                f"intent {self.request_id} đã ở trạng thái kết thúc {self.state}"
+                f"intent {self.request_id} is already in terminal state {self.state}"
             )
         self.state = state
         self.updated_at = when or _now()

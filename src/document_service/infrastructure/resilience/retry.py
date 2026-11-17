@@ -151,9 +151,7 @@ class RetryPolicy:
         """Lỗi có thuộc nhóm được retry hay không."""
         return error.error_class.retryable
 
-    def delay_for(
-        self, attempt: int, error: ClassifiedError, backoff: BackoffStrategy
-    ) -> float:
+    def delay_for(self, attempt: int, error: ClassifiedError, backoff: BackoffStrategy) -> float:
         """Thời gian chờ, tôn trọng Retry-After nếu server có gửi."""
         if error.retry_after_seconds is not None:
             return max(error.retry_after_seconds, backoff.next_delay(attempt))

@@ -12,11 +12,7 @@ from typing import Any, AsyncIterator, Callable
 from document_service.application.orchestration.snapshot import VersionSnapshot
 from document_service.domain.dto import PutResult
 from document_service.domain.model import DocumentVersion, UploadIntent
-from document_service.domain.port import (
-    IntentStorePort,
-    MetadataCatalogPort,
-    ObjectStorePort,
-)
+from document_service.domain.port import IntentStorePort, MetadataCatalogPort, ObjectStorePort
 from document_service.domain.value import IntentState
 from document_service.utils.logging_setup import get_logger
 
@@ -61,19 +57,19 @@ class UploadSaga:
         vận hành xử lý, thay vì tạo một phiên bản rỗng.
         """
         if not intent.payload:
-            await self._fail(intent, "intent thiếu snapshot phiên bản")
+            await self._fail(intent, "intent is missing the version snapshot")
             return False
         version = self._snapshot.from_payload(intent.payload)
         try:
             info = await self._objects.head(version.storage_uri)
         except Exception as error:  # phụ thuộc ngoài, đã được adapter phân loại
             _LOGGER.warning(
-                "không đọc được object khi phục hồi",
+                "cannot read the object while recovering",
                 extra={"request_id": str(intent.request_id), "error": str(error)},
             )
             raise
         if info.size_bytes <= 0 and info.etag == "":
-            await self._fail(intent, "object chưa tồn tại, không thể phục hồi")
+            await self._fail(intent, "object does not exist yet, cannot recover")
             return False
         await self._register_catalog(intent, version, metadata)
         await self._intents.advance(intent.request_id, IntentState.COMPLETED)
@@ -105,6 +101,6 @@ class UploadSaga:
         intent.state = IntentState.FAILED
         await self._intents.save(intent)
         _LOGGER.error(
-            "intent không thể phục hồi",
+            "intent cannot be recovered",
             extra={"request_id": str(intent.request_id), "reason": reason},
         )

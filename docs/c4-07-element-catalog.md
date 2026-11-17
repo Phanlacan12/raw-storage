@@ -123,7 +123,7 @@ Năm test case `rủi ro cao` (POC-06, 09, 17, 19, 22) là những test case có
 | # | Quyết định | Định hướng hiện tại | Phần tử bị ảnh hưởng | Chốt sau |
 |---|---|---|---|---|
 | Q1 | OpenMetadata hay DataHub | **Đã chốt 17/11/2026: OpenMetadata.** Mã nguồn chỉ còn một adapter (xem [c4-04b](c4-04b-code-structure.md)); DataHub giữ làm đối chứng tài liệu. PoC chuyển từ so sánh A/B sang kiểm chứng giới hạn của OpenMetadata | C2, C3, C4, C5, D12 | Đã chốt |
-| Q2 | Có cần registry database/queue | Thử durable intent trên S3 + reconciliation | C7, C8, D11 | POC-18, 21, 22 |
+| Q2 | Có cần registry database/queue | Thử durable intent trên S3 + reconciliation. **Kết quả code 18/11/2026:** bộ contract test cho thấy sqlite registry đạt test hai request đồng thời nhờ `UNIQUE`, còn manifest trên S3 **không** ràng buộc được tính duy nhất và phải liệt kê toàn prefix khi đối soát — xem [c4-08 mục 4](c4-08-tra-soat-code-vs-thiet-ke.md) | C7, C8, D11 | POC-18, 21, 22 |
 | Q3 | Tìm kiếm metadata | Ưu tiên native API; nếu thiếu thì tính chi phí index/gateway | C2, C4, C9, D18 | POC-02, 19 |
 | Q4 | Quan hệ hai chiều | Native edge nếu đủ; nếu không thì registry relation | D8, C2, C7 | POC-06, 09 |
 | Q5 | Trường nào được sửa qua catalog | Chỉ metadata mô tả | Ranh giới ghi ở L2 mục 2.4, D12 | Trước POC-20 |

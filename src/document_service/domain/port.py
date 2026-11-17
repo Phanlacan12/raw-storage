@@ -73,9 +73,7 @@ class MetadataCatalogPort(ABC):
         """Cập nhật trường kiểm soát của một phiên bản, chỉ Document Service gọi."""
 
     @abstractmethod
-    async def patch_document_fields(
-        self, document_id: DocumentId, fields: dict[str, Any]
-    ) -> None:
+    async def patch_document_fields(self, document_id: DocumentId, fields: dict[str, Any]) -> None:
         """Cập nhật trường kiểm soát ở mức tài liệu, ví dụ current_version_id."""
 
     @abstractmethod
@@ -89,7 +87,6 @@ class MetadataCatalogPort(ABC):
     @abstractmethod
     async def search(self, query: SearchQuery) -> SearchPage:
         """Tìm kiếm theo metadata, có phân trang."""
-
 
 
 class RelationshipStorePort(ABC):
@@ -213,7 +210,5 @@ class DocumentLockPort(ABC):
     """Tuần tự hoá thao tác trên cùng một tài liệu (bất biến I4, I5)."""
 
     @abstractmethod
-    async def with_lock(
-        self, document_id: DocumentId, operation: Callable[[], Awaitable[T]]
-    ) -> T:
+    async def with_lock(self, document_id: DocumentId, operation: Callable[[], Awaitable[T]]) -> T:
         """Chạy thao tác trong khóa theo document_id."""

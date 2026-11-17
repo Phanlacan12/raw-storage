@@ -25,7 +25,7 @@ Thành phần D1–D18 theo [c4-03](../docs/c4-03-component-document-service.md)
 
 | ID | Thành phần | File hiện thực |
 |---|---|---|
-| D1 | API Layer | `adapter/inbound/http/routes.py`, `schemas.py`, `errors.py`, `dependencies.py` |
+| D1 | API Layer | `adapter/inbound/http/routes.py`, `schemas.py`, `errors.py`, `dependencies.py`, `context.py` |
 | D2 | Authentication | `adapter/inbound/security/auth.py` (`OidcTokenVerifier`, `PrincipalResolver`) |
 | D3 | Authorization / PDP | `adapter/outbound/policy/policy_decision.py` (`CachingPolicyDecision`) |
 | D4 | Upload Handler | `adapter/inbound/http/upload_handler.py` (`UploadHandler`, `IdempotencyKeyFilter`) |
@@ -43,6 +43,8 @@ Thành phần D1–D18 theo [c4-03](../docs/c4-03-component-document-service.md)
 | D16 | Audit Logger | `adapter/outbound/observability/audit_log.py` (`StructuredAuditLogger`) |
 | D17 | Sync Orchestrator | `adapter/inbound/sync/source_sync.py` (`SourceSyncJob`, `FileSystemSourceConnector`, `SourcePermissionMapper`, `SourceSyncScheduler`) |
 | D18 | Search Query Service | `application/usecase/search_documents.py` + `adapter/outbound/openmetadata/search.py` |
+
+Dựng use case: `application/factory.py` (`UseCaseFactory`), lấy qua `container.use_cases`.
 
 Thành phần hạ tầng kèm theo: health check [c4-04b mục 10](../docs/c4-04b-code-structure.md#10-health-check) ở `infrastructure/health.py` + `adapter/inbound/health/`; resilience [mục 11](../docs/c4-04b-code-structure.md#11-retry-timeout-và-chịu-lỗi-kết-nối) ở `infrastructure/resilience/`; chỉ số [mục 11.7](../docs/c4-04b-code-structure.md#117-chỉ-số-và-cảnh-báo-bắt-buộc) ở `adapter/outbound/observability/metrics.py`; wiring ở `infrastructure/container.py`.
 

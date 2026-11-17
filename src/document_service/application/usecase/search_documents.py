@@ -59,18 +59,14 @@ class SearchDocumentsUseCase(ReadUseCase[SearchCommand, SearchPage]):
 class UpdateAccessPolicyUseCase(WriteUseCase[UpdateAccessPolicyCommand, AccessPolicy]):
     """Cập nhật access_policy và ghi audit để downstream đồng bộ."""
 
-    def __init__(
-        self, ports: PortBundle, builder: CatalogMetadataBuilder | None = None
-    ) -> None:
+    def __init__(self, ports: PortBundle, builder: CatalogMetadataBuilder | None = None) -> None:
         """Nhận bundle port và bộ dựng metadata."""
         super().__init__(ports)
         self._builder = builder or CatalogMetadataBuilder()
 
     async def execute(self, command: UpdateAccessPolicyCommand) -> AccessPolicy:
         """Ghi policy mới qua Document Service, không qua catalog UI."""
-        await self._authorize(
-            command.principal, Action.MANAGE_POLICY, str(command.document_id)
-        )
+        await self._authorize(command.principal, Action.MANAGE_POLICY, str(command.document_id))
         document = await self.ports.catalog.read_document(command.document_id)
         document.access_policy = command.access_policy
         await self.ports.catalog.patch_document_fields(

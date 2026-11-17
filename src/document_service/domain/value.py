@@ -82,7 +82,7 @@ class DocumentId:
     def validate(self) -> None:
         """Bảo đảm ID không rỗng và chỉ gồm ký tự an toàn cho khóa lưu trữ."""
         if not _ID_PATTERN.match(self.value):
-            raise InvalidValueError(f"document_id không hợp lệ: {self.value!r}")
+            raise InvalidValueError(f"invalid document_id: {self.value!r}")
 
     def __str__(self) -> str:
         """Dạng chuỗi dùng trong URI và log."""
@@ -102,7 +102,7 @@ class DocumentVersionId:
     def validate(self) -> None:
         """Bảo đảm ID không rỗng và chỉ gồm ký tự an toàn cho khóa lưu trữ."""
         if not _ID_PATTERN.match(self.value):
-            raise InvalidValueError(f"document_version_id không hợp lệ: {self.value!r}")
+            raise InvalidValueError(f"invalid document_version_id: {self.value!r}")
 
     def __str__(self) -> str:
         """Dạng chuỗi dùng trong URI và log."""
@@ -122,7 +122,7 @@ class VersionLabel:
     def validate(self) -> None:
         """Bảo đảm nhãn ngắn gọn, không chứa ký tự gây nhầm với đường dẫn."""
         if not _LABEL_PATTERN.match(self.value):
-            raise InvalidValueError(f"version_label không hợp lệ: {self.value!r}")
+            raise InvalidValueError(f"invalid version_label: {self.value!r}")
 
     def __str__(self) -> str:
         """Dạng chuỗi của nhãn."""
@@ -143,15 +143,15 @@ class Checksum:
     def validate(self) -> None:
         """Chỉ nhận thuật toán đã biết và chuỗi hex đúng định dạng."""
         if self.algorithm not in ("sha256", "sha512", "md5"):
-            raise InvalidValueError(f"thuật toán checksum không hỗ trợ: {self.algorithm}")
+            raise InvalidValueError(f"unsupported checksum algorithm: {self.algorithm}")
         if not _CHECKSUM_PATTERN.match(self.hex_digest):
-            raise InvalidValueError("hex_digest của checksum không hợp lệ")
+            raise InvalidValueError("invalid checksum hex_digest")
 
     @classmethod
     def parse(cls, raw: str) -> Checksum:
         """Đọc checksum dạng `sha256:<hex>`."""
         if ":" not in raw:
-            raise InvalidValueError("checksum phải có dạng <algorithm>:<hex>")
+            raise InvalidValueError("checksum must have the form <algorithm>:<hex>")
         algorithm, _, digest = raw.partition(":")
         return cls(algorithm=algorithm.strip().lower(), hex_digest=digest.strip().lower())
 
@@ -174,7 +174,7 @@ class StorageUri:
     def validate(self) -> None:
         """Bảo đảm bucket và key không rỗng."""
         if not self.bucket or not self.key:
-            raise InvalidValueError("storage_uri phải có cả bucket và key")
+            raise InvalidValueError("storage_uri must have both bucket and key")
 
     @classmethod
     def for_version(
@@ -187,7 +187,7 @@ class StorageUri:
     def parse(cls, raw: str) -> StorageUri:
         """Đọc URI dạng `s3://bucket/key`."""
         if not raw.startswith("s3://"):
-            raise InvalidValueError("storage_uri phải bắt đầu bằng s3://")
+            raise InvalidValueError("storage_uri must start with s3://")
         remainder = raw[len("s3://") :]
         bucket, _, key = remainder.partition("/")
         return cls(bucket=bucket, key=key)
@@ -210,7 +210,7 @@ class IdempotencyKey:
     def validate(self) -> None:
         """Khóa phải đủ dài để không trùng do ngẫu nhiên."""
         if len(self.value) < 8 or len(self.value) > 200:
-            raise InvalidValueError("idempotency_key phải dài 8..200 ký tự")
+            raise InvalidValueError("idempotency_key must be 8..200 characters long")
 
     def __str__(self) -> str:
         """Dạng chuỗi của khóa."""
@@ -230,7 +230,7 @@ class RequestId:
     def validate(self) -> None:
         """Bảo đảm định danh không rỗng."""
         if not _ID_PATTERN.match(self.value):
-            raise InvalidValueError(f"request_id không hợp lệ: {self.value!r}")
+            raise InvalidValueError(f"invalid request_id: {self.value!r}")
 
     def __str__(self) -> str:
         """Dạng chuỗi của định danh."""
@@ -251,7 +251,7 @@ class Actor:
     def validate(self) -> None:
         """Chủ thể phải có định danh."""
         if not self.principal_id:
-            raise InvalidValueError("actor phải có principal_id")
+            raise InvalidValueError("actor must have a principal_id")
 
     def __str__(self) -> str:
         """Dạng chuỗi dùng trong log."""

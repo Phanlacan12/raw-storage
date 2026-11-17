@@ -82,9 +82,7 @@ class OmCustomPropertyRegistrar:
         payload = await self._client.get(f"{endpoints.METADATA_TYPES}/name/{entity_type}")
         items = payload.get("customProperties", []) or []
         return {
-            str(item.get("name"))
-            for item in items
-            if isinstance(item, dict) and item.get("name")
+            str(item.get("name")) for item in items if isinstance(item, dict) and item.get("name")
         }
 
     async def ensure_properties(
@@ -94,7 +92,7 @@ class OmCustomPropertyRegistrar:
         payload = await self._client.get(f"{endpoints.METADATA_TYPES}/name/{entity_type}")
         type_id = str(payload.get("id", ""))
         if not type_id:
-            raise SchemaNotReadyError(f"không đọc được entity type {entity_type}")
+            raise SchemaNotReadyError(f"cannot read entity type {entity_type}")
         existing = await self.existing_properties(entity_type)
         added: list[str] = []
         for definition in definitions:
@@ -123,7 +121,7 @@ class OmCustomPropertyRegistrar:
         missing = [name for name in names if name not in existing]
         if missing:
             raise SchemaNotReadyError(
-                f"custom property chưa đăng ký trên {entity_type}: {', '.join(missing)}"
+                f"custom property is not registered on {entity_type}: {', '.join(missing)}"
             )
 
     def _as_payload(self, definition: PropertyDefinition) -> dict[str, Any]:
@@ -150,19 +148,17 @@ class OmSchemaMigration:
         version = await self._client.server_version()
         if not self._client.pin.matches(version):
             raise SchemaNotReadyError(
-                f"server {version} lệch phiên bản đã cố định "
+                f"server {version} differs from the pinned version "
                 f"{self._client.pin.pinned_version}"
             )
         await self._provisioner.ensure_drive_service()
         await self._provisioner.ensure_root_directory()
-        definitions = [
-            PropertyDefinition(name=name) for name in self._settings.required_properties
-        ]
+        definitions = [PropertyDefinition(name=name) for name in self._settings.required_properties]
         for entity_type in ("file", "directory"):
             added = await self._registrar.ensure_properties(entity_type, definitions)
             if added:
                 _LOGGER.info(
-                    "đăng ký custom property",
+                    "registered custom property",
                     extra={"entity_type": entity_type, "added": ",".join(added)},
                 )
             await self._registrar.assert_filterable(

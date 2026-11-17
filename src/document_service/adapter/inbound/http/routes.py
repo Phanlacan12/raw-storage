@@ -98,7 +98,7 @@ async def create_document(
         document_id=DocumentId(payload.document_id) if payload.document_id else None,
         retention_policy=payload.retention_policy,
     )
-    document = await ctx.container.register_document().execute(command)
+    document = await ctx.container.use_cases.register_document().execute(command)
     return DocumentResponse.from_domain(document)
 
 
@@ -110,14 +110,12 @@ async def read_document(document_id: str, ctx: ReadCtx) -> DocumentResponse:
         ctx.principal, Action.VIEW_METADATA, str(identifier)
     )
     if not decision.allowed:
-        raise PolicyDeniedError(decision.reason or "không có quyền xem tài liệu")
+        raise PolicyDeniedError(decision.reason or "not allowed to view the document")
     document = await ctx.container.ports.catalog.read_document(identifier)
     return DocumentResponse.from_domain(document)
 
 
-@router.post(
-    "/documents/{document_id}/versions", response_model=VersionResponse, status_code=201
-)
+@router.post("/documents/{document_id}/versions", response_model=VersionResponse, status_code=201)
 async def create_version(
     document_id: str,
     ctx: UploadCtx,
@@ -133,7 +131,7 @@ async def create_version(
         ctx.idempotency_key,
         version_label,
     )
-    result: CreateVersionResult = await ctx.container.create_version().execute(
+    result: CreateVersionResult = await ctx.container.use_cases.create_version().execute(
         CreateVersionCommand(
             request=prepared.request,
             principal=ctx.principal,
@@ -160,7 +158,7 @@ async def transition_status(
         target_status=DocumentStatus(payload.status),
         principal=ctx.principal,
     )
-    result = await ctx.container.approve_version().execute(command)
+    result = await ctx.container.use_cases.approve_version().execute(command)
     return VersionResponse.from_domain(result.approved)
 
 
@@ -177,13 +175,11 @@ async def declare_relationship(
         target_version_id=DocumentVersionId(payload.target_version_id),
         principal=ctx.principal,
     )
-    relationship = await ctx.container.declare_relationship().execute(command)
+    relationship = await ctx.container.use_cases.declare_relationship().execute(command)
     return RelationshipResponse.from_domain(relationship)
 
 
-@router.get(
-    "/versions/{version_id}/relationships", response_model=list[RelationshipResponse]
-)
+@router.get("/versions/{version_id}/relationships", response_model=list[RelationshipResponse])
 async def query_relationships(
     version_id: str,
     ctx: ReadCtx,
@@ -197,7 +193,7 @@ async def query_relationships(
         direction=direction,
         relation_type=relation_type,
     )
-    items = await ctx.container.query_relationships().execute(command)
+    items = await ctx.container.use_cases.query_relationships().execute(command)
     return [RelationshipResponse.from_domain(item) for item in items]
 
 
@@ -214,7 +210,7 @@ async def download_version(
         version_id=DocumentVersionId(version_id),
         principal=ctx.principal,
     )
-    grant = await ctx.container.issue_download().execute(command)
+    grant = await ctx.container.use_cases.issue_download().execute(command)
     if not grant.proxied:
         return DownloadResponse.from_domain(grant)
     document = await ctx.container.ports.catalog.read_document(command.document_id)
@@ -222,16 +218,14 @@ async def download_version(
     return StreamingResponse(
         ctx.container.proxy_streamer().stream(version.storage_uri),
         media_type="application/octet-stream",
-        headers={
-            "Content-Disposition": f'attachment; filename="{version.original_file_name}"'
-        },
+        headers={"Content-Disposition": f'attachment; filename="{version.original_file_name}"'},
     )
 
 
 @router.get("/search", response_model=SearchResponse)
 async def search_documents(ctx: ReadCtx, params: SearchCtx) -> SearchResponse:
     """Tìm kiếm theo metadata với lọc tổ hợp và phân trang."""
-    page = await ctx.container.search_documents().execute(
+    page = await ctx.container.use_cases.search_documents().execute(
         SearchCommand(query=params.to_query(), principal=ctx.principal)
     )
     return SearchResponse.from_domain(page)
@@ -250,7 +244,7 @@ async def update_access_policy(
         principal=ctx.principal,
         access_policy=payload.to_domain(),
     )
-    policy = await ctx.container.update_access_policy().execute(command)
+    policy = await ctx.container.use_cases.update_access_policy().execute(command)
     return AccessPolicyPayload.from_domain(policy)
 
 
@@ -258,5 +252,5 @@ async def update_access_policy(
 async def list_audit(document_id: str, ctx: ReadCtx) -> list[AuditEventResponse]:
     """Đọc lịch sử audit của một tài liệu."""
     command = ListAuditCommand(document_id=DocumentId(document_id), principal=ctx.principal)
-    events = await ctx.container.list_audit().execute(command)
+    events = await ctx.container.use_cases.list_audit().execute(command)
     return [AuditEventResponse.from_domain(event) for event in events]

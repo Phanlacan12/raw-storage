@@ -56,20 +56,20 @@ class ApplicationFactory:
         del application
         await self._run_startup()
         yield
-        _LOGGER.info("service dừng")
+        _LOGGER.info("service stopped")
 
     async def _run_startup(self) -> None:
         """Chuẩn bị schema catalog rồi đánh dấu startup hoàn tất."""
         settings = self._container.settings
         if settings.app.profile is AdapterProfile.FAKE:
             self._container.health.mark_startup_done()
-            _LOGGER.info("khởi động với profile fake, bỏ qua migration catalog")
+            _LOGGER.info("starting with the fake profile, skipping catalog migration")
             return
         client = OmHttpClient(settings.catalog, self._container.executor("catalog"))
         await OmSchemaMigration(client, settings.catalog).run_on_startup()
         await client.aclose()
         self._container.health.mark_startup_done()
-        _LOGGER.info("migration schema catalog hoàn tất")
+        _LOGGER.info("catalog schema migration complete")
 
 
 def create_app() -> FastAPI:

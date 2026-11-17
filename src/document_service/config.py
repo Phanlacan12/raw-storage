@@ -38,6 +38,7 @@ CONFIG_FILE_ORDER = (
     "resilience.yml",
     "health.yml",
     "sync.yml",
+    "events.yml",
 )
 
 
@@ -92,9 +93,7 @@ class CatalogSettings(BaseModel):
     pinned_version: str = ""
     drive_service_name: str = "raw-documents"
     root_directory: str = "documents"
-    required_properties: list[str] = Field(
-        default_factory=lambda: list(FILTERABLE_FIELDS)
-    )
+    required_properties: list[str] = Field(default_factory=lambda: list(FILTERABLE_FIELDS))
 
 
 class StorageSettings(BaseModel):
@@ -182,14 +181,27 @@ class ResilienceSettings(BaseModel):
             max_delay_seconds=0.5,
         )
     )
-    relationship: DependencyResiliencePolicy = Field(
-        default_factory=DependencyResiliencePolicy
-    )
+    relationship: DependencyResiliencePolicy = Field(default_factory=DependencyResiliencePolicy)
     idp: DependencyResiliencePolicy = Field(
         default_factory=lambda: DependencyResiliencePolicy(
             read_timeout_seconds=2.0, total_timeout_seconds=3.0, max_attempts=2
         )
     )
+    events: DependencyResiliencePolicy = Field(
+        default_factory=lambda: DependencyResiliencePolicy(
+            read_timeout_seconds=3.0, total_timeout_seconds=5.0, max_attempts=2
+        )
+    )
+
+
+class EventSettings(BaseModel):
+    """Phát sự kiện cho downstream (configs/events.yml)."""
+
+    enabled: bool = False
+    webhook_urls: list[str] = Field(default_factory=list)
+    batch_size: int = 50
+    interval_seconds: float = 15.0
+    max_attempts: int = 5
 
 
 class SourceSettings(BaseModel):
@@ -247,6 +259,7 @@ class Settings(BaseSettings):
     resilience: ResilienceSettings = Field(default_factory=ResilienceSettings)
     health: HealthSettings = Field(default_factory=HealthSettings)
     sync: SyncSettings = Field(default_factory=SyncSettings)
+    events: EventSettings = Field(default_factory=EventSettings)
 
     @classmethod
     def settings_customise_sources(

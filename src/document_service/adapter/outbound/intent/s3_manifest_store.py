@@ -108,9 +108,7 @@ class S3ManifestIntentStore(IntentStorePort, OutboundAdapter):
 
     def _manifest_uri(self, request_id: RequestId) -> StorageUri:
         """Vị trí manifest của một request."""
-        return StorageUri(
-            bucket=self._bucket, key=f"{self._prefix}/manifests/{request_id}.json"
-        )
+        return StorageUri(bucket=self._bucket, key=f"{self._prefix}/manifests/{request_id}.json")
 
     def _index_uri(self, key: IdempotencyKey) -> StorageUri:
         """Vị trí index theo idempotency key."""

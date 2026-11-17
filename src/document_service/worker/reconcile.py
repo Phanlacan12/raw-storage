@@ -24,11 +24,7 @@ from document_service.application.orchestration.upload_saga import UploadSaga
 from document_service.config import Settings, get_settings
 from document_service.domain.errors import DomainError
 from document_service.domain.model import UploadIntent
-from document_service.domain.port import (
-    IntentStorePort,
-    MetadataCatalogPort,
-    ObjectStorePort,
-)
+from document_service.domain.port import IntentStorePort, MetadataCatalogPort, ObjectStorePort
 from document_service.domain.value import DocumentId, IntentState
 from document_service.infrastructure.container import ServiceContainer
 from document_service.utils.logging_setup import get_logger
@@ -99,7 +95,7 @@ class IntentRecoveryJob:
             intent.register_retry(str(error))
             await self._intents.save(intent)
             _LOGGER.warning(
-                "phục hồi intent thất bại, sẽ thử lại",
+                "intent recovery failed, will retry",
                 extra={"request_id": str(intent.request_id), "error": str(error)},
             )
             return False
@@ -107,10 +103,10 @@ class IntentRecoveryJob:
     async def _give_up(self, intent: UploadIntent) -> None:
         """Đánh dấu Failed và cảnh báo khi vượt ngưỡng retry."""
         intent.state = IntentState.FAILED
-        intent.last_error = f"vượt ngưỡng retry {intent.retry_count}"
+        intent.last_error = f"retry limit exceeded at {intent.retry_count} attempts"
         await self._intents.save(intent)
         _LOGGER.error(
-            "intent vượt ngưỡng retry, cần can thiệp thủ công",
+            "intent exceeded the retry limit, manual intervention needed",
             extra={
                 "request_id": str(intent.request_id),
                 "version_id": str(intent.version_id),
@@ -206,7 +202,7 @@ class ReconcileRunner:
         report = await self._recovery.run_once()
         report.orphan_objects = await self._orphans.scan()
         report.dangling_documents = await self._dangling.scan(document_ids or [])
-        _LOGGER.info("đối soát xong", extra=report.as_payload())
+        _LOGGER.info("reconciliation finished", extra=report.as_payload())
         return report
 
     async def run_forever(self) -> None:
@@ -223,7 +219,7 @@ def main() -> None:
     runner = ReconcileRunner()
     report = asyncio.run(runner.run_once())
     _LOGGER.info(
-        "kết quả đối soát",
+        "reconciliation result",
         extra={"profile": str(settings.app.profile), **report.as_payload()},
     )
 

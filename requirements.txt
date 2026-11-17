@@ -1,0 +1,17 @@
+# Dependency runtime của Document Service.
+#
+# Nguồn chân lý là [project.dependencies] trong pyproject.toml; file này giữ
+# đúng các ràng buộc đó để cài được bằng pip thuần (Docker, máy không có uv):
+#     python -m pip install -r requirements.txt
+# Pin tuyệt đối để build lặp lại nằm ở uv.lock (`uv sync --frozen`).
+# Sau khi sửa pyproject.toml, chạy `make requirements` để đồng bộ lại file này.
+
+boto3>=1.44.4
+fastapi>=0.163.1
+httpx>=0.28.1
+pydantic>=2.14.3
+pydantic-settings>=2.16.3
+pyjwt[crypto]>=2.15.1
+python-multipart>=0.0.34
+pyyaml>=6.0.3
+uvicorn[standard]>=0.54.0

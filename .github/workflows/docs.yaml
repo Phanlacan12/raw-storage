@@ -39,8 +39,8 @@ jobs:
       - name: Fail if any diagram is broken
         run: |
           set -euo pipefail
-          if ! grep -q "^0 diagram lỗi" mermaid.log; then
-            echo "::error::Co so do mermaid loi, xem mermaid.log"
+          if ! grep -q "^0 broken diagram" mermaid.log; then
+            echo "::error::A mermaid diagram is broken, see mermaid.log"
             exit 1
           fi
 
@@ -54,7 +54,7 @@ jobs:
               [ -z "$target" ] && continue
               path="$(dirname "$file")/${target%%#*}"
               if [ ! -e "$path" ]; then
-                echo "::error file=$file::Link noi bo khong ton tai: $target"
+                echo "::error file=$file::Internal link does not exist: $target"
                 status=1
               fi
             done < <(grep -oE '\]\(([^)]+\.(md|mjs))' "$file" | sed 's/^](//')

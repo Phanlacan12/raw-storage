@@ -10,15 +10,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import AsyncIterator, Protocol
 
-from document_service.domain.errors import InvalidValueError
 from document_service.domain.dto import UploadRequest
+from document_service.domain.errors import InvalidValueError
 from document_service.domain.model import Principal
-from document_service.domain.value import (
-    Checksum,
-    DocumentId,
-    IdempotencyKey,
-    VersionLabel,
-)
+from document_service.domain.value import Checksum, DocumentId, IdempotencyKey, VersionLabel
 from document_service.utils.hashing import StreamingHasher
 
 CHUNK_SIZE = 1024 * 1024
@@ -76,12 +71,10 @@ class UploadHandler:
                 break
             hasher.update(chunk)
             if hasher.size_bytes > self._max_bytes:
-                raise InvalidValueError(
-                    f"file vượt giới hạn {self._max_bytes} byte"
-                )
+                raise InvalidValueError(f"file exceeds the {self._max_bytes} byte limit")
             chunks.append(chunk)
         if hasher.size_bytes == 0:
-            raise InvalidValueError("file rỗng")
+            raise InvalidValueError("file is empty")
         request = UploadRequest(
             document_id=document_id,
             original_file_name=upload.filename or "unnamed",
@@ -112,5 +105,5 @@ class IdempotencyKeyFilter:
         if raw_value:
             return IdempotencyKey(raw_value)
         if self._required:
-            raise InvalidValueError("thiếu header Idempotency-Key")
+            raise InvalidValueError("missing Idempotency-Key header")
         return IdempotencyKey("auto-generated-key")

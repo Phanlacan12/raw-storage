@@ -14,12 +14,7 @@ from document_service.application.metadata_builder import CatalogMetadataBuilder
 from document_service.application.usecase.base import AuditOutcome, AuditTarget, WriteUseCase
 from document_service.domain.errors import PolicyDeniedError
 from document_service.domain.model import ApprovalResult, DomainEvent, Principal
-from document_service.domain.value import (
-    Action,
-    DocumentId,
-    DocumentStatus,
-    DocumentVersionId,
-)
+from document_service.domain.value import Action, DocumentId, DocumentStatus, DocumentVersionId
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,9 +55,7 @@ class ApproveVersionUseCase(WriteUseCase[TransitionStatusCommand, ApprovalResult
                 AuditOutcome.denied(str(error)),
             )
             raise
-        return await self._run_exclusive(
-            command.document_id, lambda: self._transition(command)
-        )
+        return await self._run_exclusive(command.document_id, lambda: self._transition(command))
 
     async def _transition(self, command: TransitionStatusCommand) -> ApprovalResult:
         """Phần chạy trong khóa: đọc lại tài liệu, chuyển trạng thái, ghi catalog."""

@@ -12,10 +12,7 @@ from typing import Awaitable, Callable, TypeVar
 
 from document_service.config import DependencyResiliencePolicy
 from document_service.domain.errors import DependencyUnavailableError
-from document_service.infrastructure.resilience.breaker import (
-    Bulkhead,
-    CircuitBreaker,
-)
+from document_service.infrastructure.resilience.breaker import Bulkhead, CircuitBreaker
 from document_service.infrastructure.resilience.deadline import Deadline, TimeoutPolicy
 from document_service.infrastructure.resilience.retry import (
     BackoffStrategy,
@@ -93,15 +90,13 @@ class ResilientCallExecutor:
         effective_deadline = deadline or self.new_deadline()
         if not self._breaker.allow_request():
             raise DependencyUnavailableError(
-                self._name, f"circuit breaker của {self._name} đang mở"
+                self._name, f"circuit breaker for {self._name} is open"
             )
         self._budget.register_call()
         async with self._bulkhead:
             return await self._attempt_loop(operation, effective_deadline)
 
-    async def _attempt_loop(
-        self, operation: Callable[[], Awaitable[T]], deadline: Deadline
-    ) -> T:
+    async def _attempt_loop(self, operation: Callable[[], Awaitable[T]], deadline: Deadline) -> T:
         """Vòng thử lại cho tới khi thành công, hết lượt hoặc hết deadline."""
         last_error: ClassifiedError | None = None
         for attempt in range(1, self._retry.max_attempts + 1):
@@ -119,9 +114,7 @@ class ResilientCallExecutor:
                     break
         raise self._exhausted(last_error)
 
-    async def _single_call(
-        self, operation: Callable[[], Awaitable[T]], deadline: Deadline
-    ) -> T:
+    async def _single_call(self, operation: Callable[[], Awaitable[T]], deadline: Deadline) -> T:
         """Một lần gọi, có timeout không vượt phần còn lại của deadline."""
         timeout = deadline.slice_for(self._timeouts.read_seconds)
         try:
@@ -139,7 +132,7 @@ class ResilientCallExecutor:
         """Chờ backoff rồi cho biết có nên thử lại nữa không."""
         if not self._budget.try_acquire():
             _LOGGER.warning(
-                "retry bị budget từ chối", extra={"dependency": self._name, "attempt": attempt}
+                "retry rejected by the budget", extra={"dependency": self._name, "attempt": attempt}
             )
             return False
         delay = self._retry.delay_for(attempt, error, self._backoff)
@@ -161,12 +154,12 @@ class ResilientCallExecutor:
 
     def _exhausted(self, last_error: ClassifiedError | None) -> DependencyUnavailableError:
         """Lỗi trả về khi đã hết lượt thử hoặc hết deadline."""
-        detail = str(last_error) if last_error is not None else "không rõ nguyên nhân"
+        detail = str(last_error) if last_error is not None else "unknown cause"
         retry_after = self._timeouts.total_seconds
         if last_error is not None and last_error.retry_after_seconds is not None:
             retry_after = last_error.retry_after_seconds
         _LOGGER.warning(
-            "phụ thuộc không khả dụng sau khi retry",
+            "dependency unavailable after retries",
             extra={"dependency": self._name, "detail": detail},
         )
         return DependencyUnavailableError(self._name, detail, retry_after)
@@ -188,7 +181,7 @@ class ExecutorRegistry(metaclass=SingletonMeta):
     def get(self, name: str) -> ResilientCallExecutor:
         """Lấy executor đã đăng ký."""
         if name not in self._executors:
-            raise KeyError(f"chưa đăng ký executor cho phụ thuộc {name}")
+            raise KeyError(f"no executor registered for dependency {name}")
         return self._executors[name]
 
     def all_executors(self) -> dict[str, ResilientCallExecutor]:

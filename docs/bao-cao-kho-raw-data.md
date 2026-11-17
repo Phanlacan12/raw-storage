@@ -1,10 +1,10 @@
 # ĐỀ XUẤT XÂY DỰNG KHO LƯU TRỮ VÀ QUẢN LÝ TÀI LIỆU DÙNG CHUNG
 
-> **Trạng thái:** Bản dự thảo đã rà soát kiến trúc; các khả năng phụ thuộc sản phẩm phải được kiểm chứng qua thử nghiệm (PoC – Proof of Concept) trước khi phê duyệt triển khai.  
-> **Định hướng:** Kho quản lý **raw data** (dữ liệu gốc) và metadata (thông tin mô tả dữ liệu) dùng chung; cung cấp dữ liệu nguồn cho hệ thống tri thức (Knowledge Base – KB) và những ứng dụng khác.  
-> **Hướng công nghệ:** Kho lưu file gốc (Object Storage tương thích S3) + hệ thống quản lý metadata (Metadata Catalog, với OpenMetadata là ứng viên ưu tiên và DataHub đối chứng) + dịch vụ quản lý tài liệu (Document Service). Quyết định cuối cùng dựa trên kết quả thử nghiệm ở mục III và VI.  
-> **Use case minh họa:** Quản lý văn bản, tài liệu trong dự án phát triển phần mềm.  
-> **Giới hạn phạm vi:** Giai đoạn này tiếp nhận và lưu giữ dữ liệu đúng định dạng gốc (PDF, DOCX, XLSX, PPTX, ...), quản lý metadata, phiên bản và truy xuất. Chuẩn hóa nội dung về một định dạng thống nhất như Markdown (.md) thuộc giai đoạn sau (xem mục 2.1).  
+> **Trạng thái:** Bản dự thảo đã rà soát kiến trúc; các khả năng phụ thuộc sản phẩm phải được kiểm chứng qua thử nghiệm (PoC – Proof of Concept) trước khi phê duyệt triển khai.
+> **Định hướng:** Kho quản lý **raw data** (dữ liệu gốc) và metadata (thông tin mô tả dữ liệu) dùng chung; cung cấp dữ liệu nguồn cho hệ thống tri thức (Knowledge Base – KB) và những ứng dụng khác.
+> **Hướng công nghệ:** Kho lưu file gốc (Object Storage tương thích S3) + hệ thống quản lý metadata (Metadata Catalog, với OpenMetadata là ứng viên ưu tiên và DataHub đối chứng) + dịch vụ quản lý tài liệu (Document Service). Quyết định cuối cùng dựa trên kết quả thử nghiệm ở mục III và VI.
+> **Use case minh họa:** Quản lý văn bản, tài liệu trong dự án phát triển phần mềm.
+> **Giới hạn phạm vi:** Giai đoạn này tiếp nhận và lưu giữ dữ liệu đúng định dạng gốc (PDF, DOCX, XLSX, PPTX, ...), quản lý metadata, phiên bản và truy xuất. Chuẩn hóa nội dung về một định dạng thống nhất như Markdown (.md) thuộc giai đoạn sau (xem mục 2.1).
 > **Lưu ý:** Các vấn đề nêu ra là giả thuyết cần kiểm chứng. Kiến trúc ba lớp là định hướng, chưa mặc định catalog đáp ứng đủ tìm kiếm theo custom metadata, liên kết hai chiều hoặc ràng buộc phiên bản. Sản phẩm, giải pháp lưu trạng thái xử lý, hạ tầng và chi phí chốt sau PoC. Giá trị ghi **(đề xuất)** hoặc **[cần xác định]** cần xác nhận trước khi phê duyệt triển khai.
 
 ## MỤC LỤC

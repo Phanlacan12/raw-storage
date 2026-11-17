@@ -14,11 +14,7 @@ from document_service.adapter.outbound.base import OutboundAdapter
 from document_service.adapter.outbound.sqlite_support import SqliteDatabase
 from document_service.domain.model import Relationship
 from document_service.domain.port import RelationshipStorePort
-from document_service.domain.value import (
-    Direction,
-    DocumentVersionId,
-    RelationType,
-)
+from document_service.domain.value import Direction, DocumentVersionId, RelationType
 from document_service.infrastructure.health import DependencyKind, HealthResult
 from document_service.infrastructure.resilience.executor import ResilientCallExecutor
 

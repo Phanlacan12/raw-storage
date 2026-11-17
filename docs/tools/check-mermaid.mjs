@@ -41,4 +41,4 @@ for (const f of files) {
     } else i++;
   }
 }
-console.log(`\n${fail} diagram lỗi`);
+console.log(`\n${fail} broken diagram(s)`);

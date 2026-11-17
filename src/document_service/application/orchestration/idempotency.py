@@ -45,5 +45,5 @@ class IdempotencyGuard:
         if existing.state is IntentState.FAILED:
             return ReplayDecision(intent=existing, is_replay=False)
         raise ConcurrencyConflictError(
-            f"idempotency_key {key} đang được xử lý ở trạng thái {existing.state}"
+            f"idempotency_key {key} is already being processed in state {existing.state}"
         )

@@ -88,9 +88,7 @@ class TestSchemaMigration:
 
     async def test_assert_filterable_detects_missing(self, client: OmHttpClient) -> None:
         """Trường chưa đăng ký bị phát hiện, service sẽ fail fast."""
-        from document_service.adapter.outbound.openmetadata.bootstrap import (
-            SchemaNotReadyError,
-        )
+        from document_service.adapter.outbound.openmetadata.bootstrap import SchemaNotReadyError
 
         registrar = OmCustomPropertyRegistrar(client)
         with pytest.raises(SchemaNotReadyError):
@@ -100,9 +98,7 @@ class TestSchemaMigration:
 class TestCatalogRoundTrip:
     """Ghi rồi đọc lại trên catalog thật."""
 
-    async def test_register_and_read_document(
-        self, catalog: OpenMetadataCatalogAdapter
-    ) -> None:
+    async def test_register_and_read_document(self, catalog: OpenMetadataCatalogAdapter) -> None:
         """Document → Directory, đọc lại giữ nguyên metadata."""
         document_id = DocumentId("DOC-IT-0001")
         document = Document(
@@ -177,7 +173,9 @@ class TestObjectStorage:
         executor = ResilientCallExecutor("object_store", real_settings.resilience.storage)
         store = S3ObjectStoreAdapter(real_settings.storage, executor)
         uri = StorageUri.for_version(
-            real_settings.storage.bucket, DocumentId("DOC-IT-0003"), DocumentVersionId("VER-IT-0003")
+            real_settings.storage.bucket,
+            DocumentId("DOC-IT-0003"),
+            DocumentVersionId("VER-IT-0003"),
         )
         result = await store.put_immutable(uri, _stream(b"noi dung tich hop"), CHECKSUM)
         assert result.size_bytes > 0

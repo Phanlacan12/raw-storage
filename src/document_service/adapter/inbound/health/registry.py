@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 
 from document_service.domain.errors import ServiceDegradedError
+from document_service.domain.value import Action
 from document_service.infrastructure.health import (
     DependencyKind,
     HealthIndicator,
@@ -17,7 +18,6 @@ from document_service.infrastructure.health import (
     HealthStatus,
     ServiceMode,
 )
-from document_service.domain.value import Action
 from document_service.utils.singleton import SingletonMeta
 
 
@@ -43,9 +43,7 @@ class ReadinessPolicy:
 
     def _all_up(self, results: tuple[HealthResult, ...], kind: DependencyKind) -> bool:
         """Mọi phụ thuộc của một nhóm đều không DOWN."""
-        return all(
-            item.status is not HealthStatus.DOWN for item in results if item.kind is kind
-        )
+        return all(item.status is not HealthStatus.DOWN for item in results if item.kind is kind)
 
 
 class HealthCheckRegistry(metaclass=SingletonMeta):
@@ -103,9 +101,7 @@ class DegradedModeGate(metaclass=SingletonMeta):
 
     _ALLOWED: dict[ServiceMode, frozenset[Action]] = {
         ServiceMode.FULL: frozenset(Action),
-        ServiceMode.READ_ONLY: frozenset(
-            {Action.VIEW_METADATA, Action.SEARCH, Action.DOWNLOAD}
-        ),
+        ServiceMode.READ_ONLY: frozenset({Action.VIEW_METADATA, Action.SEARCH, Action.DOWNLOAD}),
         ServiceMode.DOWNLOAD_ONLY: frozenset({Action.DOWNLOAD}),
         ServiceMode.NOT_READY: frozenset(),
     }

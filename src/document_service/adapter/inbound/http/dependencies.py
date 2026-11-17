@@ -8,10 +8,7 @@ from __future__ import annotations
 
 from fastapi import Header, Request
 
-from document_service.adapter.inbound.http.upload_handler import (
-    IdempotencyKeyFilter,
-    UploadHandler,
-)
+from document_service.adapter.inbound.http.upload_handler import IdempotencyKeyFilter, UploadHandler
 from document_service.adapter.inbound.security.auth import PrincipalResolver
 from document_service.domain.model import Principal
 from document_service.domain.value import Action, IdempotencyKey

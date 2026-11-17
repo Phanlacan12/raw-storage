@@ -30,5 +30,5 @@ class JsonCodec:
         text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
         parsed = json.loads(text)
         if not isinstance(parsed, dict):
-            raise ValueError("payload JSON phải là object")
+            raise ValueError("JSON payload must be an object")
         return parsed

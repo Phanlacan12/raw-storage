@@ -40,9 +40,9 @@ class OmExtensionMapper:
         for key, value in metadata.items():
             if value is None:
                 continue
-            extension[key] = ",".join(str(item) for item in value) if isinstance(
-                value, (list, tuple)
-            ) else value
+            extension[key] = (
+                ",".join(str(item) for item in value) if isinstance(value, (list, tuple)) else value
+            )
         return extension
 
     def from_extension(self, extension: dict[str, Any]) -> dict[str, Any]:
@@ -96,12 +96,14 @@ class OmDirectoryMapper:
         }
 
     def document_payload(self, document: Document, metadata: dict[str, Any]) -> dict[str, Any]:
-        """Payload tạo Directory đại diện tài liệu."""
-        parent = (
-            self._fqn.collection_fqn(document.metadata.collection_id)
-            if document.metadata.collection_id
-            else self._fqn.root_fqn
-        )
+        """Payload tạo Directory đại diện tài liệu.
+
+        Directory của tài liệu nằm **trực tiếp dưới thư mục gốc**, không nằm trong
+        Directory của collection: FQN phải ổn định khi tài liệu chuyển collection, và
+        `read_document(document_id)` phải tra được mà không cần biết collection. Quan
+        hệ với collection giữ ở `extension.collection_id`.
+        """
+        parent = self._fqn.root_fqn
         return {
             "name": self._fqn.document_name(document.document_id),
             "displayName": document.metadata.title or str(document.document_id),
@@ -139,9 +141,7 @@ class OmFileEntityMapper:
         self._fqn = fqn
         self._extensions = extensions or OmExtensionMapper()
 
-    def to_file_payload(
-        self, version: DocumentVersion, metadata: dict[str, Any]
-    ) -> dict[str, Any]:
+    def to_file_payload(self, version: DocumentVersion, metadata: dict[str, Any]) -> dict[str, Any]:
         """Payload tạo File entity cho một phiên bản nội dung."""
         return {
             "name": self._fqn.version_name(version.version_id),

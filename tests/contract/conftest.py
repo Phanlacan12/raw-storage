@@ -11,6 +11,12 @@ from pathlib import Path
 
 import pytest
 
+from document_service.adapter.outbound.fake.in_memory import (
+    InMemoryIntentStore,
+    InMemoryObjectStore,
+    InMemoryRelationshipStore,
+)
+from document_service.adapter.outbound.intent.s3_manifest_store import S3ManifestIntentStore
 from document_service.adapter.outbound.intent.sqlite_store import SqliteRegistryIntentStore
 from document_service.adapter.outbound.relationship.sqlite_registry import (
     SqliteRelationshipRegistry,
@@ -19,12 +25,6 @@ from document_service.adapter.outbound.sqlite_support import SqliteDatabase
 from document_service.config import DependencyResiliencePolicy
 from document_service.domain.port import IntentStorePort, RelationshipStorePort
 from document_service.infrastructure.resilience.executor import ResilientCallExecutor
-from document_service.adapter.outbound.fake.in_memory import (
-    InMemoryIntentStore,
-    InMemoryObjectStore,
-    InMemoryRelationshipStore,
-)
-from document_service.adapter.outbound.intent.s3_manifest_store import S3ManifestIntentStore
 
 
 @pytest.fixture

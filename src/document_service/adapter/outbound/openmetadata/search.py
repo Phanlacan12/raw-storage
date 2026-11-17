@@ -13,13 +13,13 @@ from document_service.adapter.outbound.openmetadata.endpoints import FILE_SEARCH
 from document_service.adapter.outbound.openmetadata.entity import OmExtensionMapper
 from document_service.domain.dto import SearchHit, SearchPage, SearchQuery
 from document_service.domain.model import AccessPolicy
-from document_service.utils.jsonx import JsonCodec
 from document_service.domain.value import (
     DocumentId,
     DocumentStatus,
     DocumentVersionId,
     VersionLabel,
 )
+from document_service.utils.jsonx import JsonCodec
 
 
 class OmSearchQueryBuilder:

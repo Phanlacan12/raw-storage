@@ -50,7 +50,7 @@ class IdpHealthIndicator(HealthIndicator):
 
     async def _probe(self) -> HealthResult:
         """JWKS còn hiệu lực hay không."""
-        return self._up() if self._jwks_available else self._degraded("JWKS dùng bản cache")
+        return self._up() if self._jwks_available else self._degraded("JWKS served from cache")
 
 
 class ReconcileBacklogIndicator(HealthIndicator):

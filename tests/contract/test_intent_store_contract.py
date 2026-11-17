@@ -73,9 +73,7 @@ class TestIntentStoreContract:
         assert found.state is IntentState.RETRY_PENDING
         assert "503" in found.last_error
 
-    async def test_find_unfinished_excludes_terminal(
-        self, intent_store: IntentStorePort
-    ) -> None:
+    async def test_find_unfinished_excludes_terminal(self, intent_store: IntentStorePort) -> None:
         """Intent đã Completed không còn nằm trong hàng đợi phục hồi."""
         pending = _intent("0004")
         done = _intent("0005")

@@ -1,0 +1,24 @@
+# Dependency phát triển: style + typecheck + test.
+# Tương ứng extras_require["dev"] trong setup.py và [dependency-groups].dev
+# trong pyproject.toml.
+#     python -m pip install -r requirements-dev.txt
+
+-r requirements.txt
+
+# --- style ---
+black>=25.9.0
+flake8>=7.3.0
+isort>=6.0.1
+pylint>=4.1.4
+pre-commit>=4.7.0
+
+# --- typecheck ---
+mypy>=2.4.1
+types-boto3>=1.44.3
+
+# --- test ---
+pytest>=9.2.0
+pytest-asyncio>=1.5.0
+pytest-cov>=7.1.0
+moto[s3]>=5.2.5
+respx>=0.23.1

@@ -1,4 +1,4 @@
-"""StructuredAuditLogger và OutboxEventPublisher (D14, D16).
+"""StructuredAuditLogger (D16).
 
 Phân vai rõ với `utils/logging_setup.py`: lớp ở đây quyết định **nội dung audit
 nghiệp vụ** (ai tải file, ai chuyển trạng thái, ai đổi quyền — bất biến I12), còn
@@ -13,12 +13,11 @@ from typing import Any
 
 from document_service.adapter.outbound.base import OutboundAdapter
 from document_service.adapter.outbound.sqlite_support import SqliteDatabase
-from document_service.domain.model import AuditEvent, DomainEvent
-from document_service.domain.port import AuditPort, EventPublisherPort
+from document_service.domain.model import AuditEvent
+from document_service.domain.port import AuditPort
 from document_service.domain.value import Actor, DocumentId
 from document_service.infrastructure.health import DependencyKind, HealthResult
 from document_service.infrastructure.resilience.executor import ResilientCallExecutor
-from document_service.utils.jsonx import JsonCodec
 from document_service.utils.logging_setup import get_logger
 
 _AUDIT_LOGGER = get_logger("document_service.audit")
@@ -95,57 +94,3 @@ class StructuredAuditLogger(AuditPort, OutboundAdapter):
             detail=row["detail"],
             occurred_at=datetime.fromisoformat(row["occurred_at"]),
         )
-
-
-class OutboxEventPublisher(EventPublisherPort, OutboundAdapter):
-    """Ghi sự kiện vào outbox bền vững rồi để worker phát đi.
-
-    Ghi outbox trong cùng database với intent giúp phát hiện sự kiện thất lạc: mọi
-    bản ghi chưa `published` đều là việc còn nợ downstream (test case POC-11).
-    """
-
-    def __init__(self, database: SqliteDatabase, executor: ResilientCallExecutor) -> None:
-        """Nhận database và executor."""
-        OutboundAdapter.__init__(self, executor, DependencyKind.OPTIONAL)
-        self._db = database
-        self._codec = JsonCodec()
-
-    async def publish(self, event: DomainEvent) -> None:
-        """Ghi sự kiện vào outbox."""
-        await self._call(
-            lambda: self._db.execute(
-                """
-                INSERT INTO outbox_event (
-                    event_type, document_id, version_id, payload, occurred_at, published
-                ) VALUES (?, ?, ?, ?, ?, 0)
-                """,
-                (
-                    event.event_type,
-                    str(event.document_id),
-                    str(event.version_id) if event.version_id is not None else "",
-                    self._codec.dumps(dict(event.payload)),
-                    event.occurred_at.isoformat(),
-                ),
-            )
-        )
-
-    async def pending_count(self) -> int:
-        """Số sự kiện chưa phát, dùng cho health và metric."""
-        rows = await self._db.query(
-            "SELECT COUNT(*) AS total FROM outbox_event WHERE published = 0"
-        )
-        return int(rows[0]["total"]) if rows else 0
-
-    async def mark_published(self, event_ids: list[int]) -> None:
-        """Đánh dấu các sự kiện đã phát thành công."""
-        for event_id in event_ids:
-            await self._db.execute(
-                "UPDATE outbox_event SET published = 1 WHERE event_id = ?", (event_id,)
-            )
-
-    async def _probe_dependency(self) -> HealthResult:
-        """Đo độ sâu hàng đợi outbox."""
-        pending = await self.pending_count()
-        if pending > 0:
-            return self.health_degraded(f"outbox còn {pending} sự kiện chưa phát")
-        return self.health_up("outbox trống")

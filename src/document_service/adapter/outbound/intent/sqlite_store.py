@@ -57,7 +57,7 @@ class SqliteRegistryIntentStore(IntentStorePort, OutboundAdapter):
             await self._call(lambda: self._db.execute(_INSERT, self._as_row(intent)))
         except sqlite3.IntegrityError as error:
             raise ConcurrencyConflictError(
-                f"idempotency_key {intent.idempotency_key} đã được dùng"
+                f"idempotency_key {intent.idempotency_key} is already used"
             ) from error
 
     async def advance(self, request_id: RequestId, state: IntentState) -> None:
@@ -139,9 +139,7 @@ class SqliteRegistryIntentStore(IntentStorePort, OutboundAdapter):
 
     def _from_row(self, row: dict[str, Any]) -> UploadIntent:
         """Dựng lại intent từ một dòng sqlite."""
-        payload = {
-            str(key): str(value) for key, value in self._codec.loads(row["payload"]).items()
-        }
+        payload = {str(key): str(value) for key, value in self._codec.loads(row["payload"]).items()}
         return UploadIntent(
             request_id=RequestId(row["request_id"]),
             idempotency_key=IdempotencyKey(row["idempotency_key"]),
