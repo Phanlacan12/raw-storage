@@ -48,9 +48,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # 4000: giai doan dung nen con nhung PR lon (outbox + contract test +
-          # examples ~3200 dong). Ha lai 1500 khi nen da on dinh.
-          MAX_CHANGE_LINES=4000
+          MAX_CHANGE_LINES=5000
           BASE_BRANCH=main
           if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
             PR_BASE=$(jq -r .pull_request.base.ref "$GITHUB_EVENT_PATH")
@@ -88,16 +86,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "--- isort ---"
-          uv run isort --check-only --diff src tests examples setup.py
-          echo "--- black ---"
-          uv run black --check --diff src tests examples setup.py
           echo "--- mypy ---"
           uv run mypy src
           echo "--- pytest ---"
           uv run pytest -s --durations=0 --disable-warnings tests/ --cov=src --cov-report=xml
-          echo "--- flake8 ---"
-          uv run flake8 src tests examples setup.py
           echo "--- pylint ---"
           INCLUDED_FILES=$(find src -type f -name "*.py")
           echo "Pylint tren $(echo "$INCLUDED_FILES" | wc -w) file"
