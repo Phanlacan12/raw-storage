@@ -64,11 +64,15 @@ class ApproveVersionUseCase(WriteUseCase[TransitionStatusCommand, ApprovalResult
             document, command.version_id, command.target_status, command.principal.as_actor()
         )
         await self.ports.catalog.patch_controlled_fields(
-            result.approved.version_id, {"status": str(result.approved.status)}
+            document.document_id,
+            result.approved.version_id,
+            {"status": str(result.approved.status)},
         )
         if result.obsoleted is not None:
             await self.ports.catalog.patch_controlled_fields(
-                result.obsoleted.version_id, {"status": str(result.obsoleted.status)}
+                document.document_id,
+                result.obsoleted.version_id,
+                {"status": str(result.obsoleted.status)},
             )
         await self.ports.catalog.patch_document_fields(
             document.document_id, self._builder.document_fields(document)

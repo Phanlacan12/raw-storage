@@ -144,7 +144,9 @@ class TestOpenMetadataAdapter:
         respx.patch(f"{BASE_URL}/api/v1/drives/files/file-1").mock(
             return_value=httpx.Response(200, json={"id": "file-1", "version": 1.1})
         )
-        await adapter.patch_controlled_fields(DocumentVersionId("VER-1"), {"status": "Approved"})
+        await adapter.patch_controlled_fields(
+            DocumentId("DOC-1"), DocumentVersionId("VER-1"), {"status": "Approved"}
+        )
         body = respx.calls.last.request.read().decode()
         assert '"op":"replace"' in body
         assert '"path":"/extension/status"' in body

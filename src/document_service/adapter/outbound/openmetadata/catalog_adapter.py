@@ -26,7 +26,7 @@ from document_service.adapter.outbound.openmetadata.search import (
 )
 from document_service.application.metadata_builder import CatalogMetadataBuilder
 from document_service.config import CatalogSettings
-from document_service.domain.dto import EntityRef, SearchFilter, SearchPage, SearchQuery
+from document_service.domain.dto import EntityRef, SearchPage, SearchQuery
 from document_service.domain.errors import DocumentNotFoundError
 from document_service.domain.model import Collection, Document, DocumentVersion
 from document_service.domain.port import MetadataCatalogPort
@@ -84,10 +84,10 @@ class OpenMetadataCatalogAdapter(MetadataCatalogPort, OutboundAdapter):
         return self._as_ref(payload, "file")
 
     async def patch_controlled_fields(
-        self, version_id: DocumentVersionId, fields: dict[str, Any]
+        self, document_id: DocumentId, version_id: DocumentVersionId, fields: dict[str, Any]
     ) -> None:
         """Cập nhật trường kiểm soát của một phiên bản bằng JSON Patch."""
-        entity = await self._find_file(version_id)
+        entity = await self._find_file(document_id, version_id)
         captured = self._guard.capture(entity)
         updated = await self._client.patch(
             f"{endpoints.FILES}/{entity['id']}", OmJsonPatchBuilder.from_fields(fields)
@@ -163,15 +163,17 @@ class OpenMetadataCatalogAdapter(MetadataCatalogPort, OutboundAdapter):
             raise DocumentNotFoundError(f"document {document_id} is not registered")
         return payload
 
-    async def _find_file(self, version_id: DocumentVersionId) -> dict[str, Any]:
-        """Tìm File entity của một phiên bản qua Search API rồi đọc lại theo id."""
-        filters = (SearchFilter(field_name="document_version_id", value=str(version_id)),)
-        query = SearchQuery(filters=filters, page_size=1)
-        page = await self.search(query)
-        if not page.hits:
-            raise DocumentNotFoundError(f"version {version_id} not found")
-        hit = page.hits[0]
-        fqn = self._fqn.version_fqn(hit.document_id, hit.version_id)
+    async def _find_file(
+        self, document_id: DocumentId, version_id: DocumentVersionId
+    ) -> dict[str, Any]:
+        """Đọc File entity của một phiên bản theo FQN.
+
+        KHÔNG đi qua Search API: index của OpenMetadata cập nhật bất đồng bộ, nên một
+        phiên bản vừa tạo xong có thể chưa có trong index và lệnh duyệt sẽ thất bại
+        với `version ... not found`. FQN suy ra được từ document_id + version_id nên
+        không cần tra cứu gì thêm.
+        """
+        fqn = self._fqn.version_fqn(document_id, version_id)
         try:
             payload = await self._client.get(
                 f"{endpoints.FILE_BY_NAME}/{fqn}", {"fields": "extension"}

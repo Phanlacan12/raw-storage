@@ -68,9 +68,14 @@ class MetadataCatalogPort(ABC):
 
     @abstractmethod
     async def patch_controlled_fields(
-        self, version_id: DocumentVersionId, fields: dict[str, Any]
+        self, document_id: DocumentId, version_id: DocumentVersionId, fields: dict[str, Any]
     ) -> None:
-        """Cập nhật trường kiểm soát của một phiên bản, chỉ Document Service gọi."""
+        """Cập nhật trường kiểm soát của một phiên bản, chỉ Document Service gọi.
+
+        Nhận cả `document_id` vì adapter cần nó để dựng FQN và đọc thẳng entity.
+        Thiếu nó thì chỉ còn đường tra qua Search API, mà index có độ trễ nên duyệt
+        một phiên bản vừa tạo sẽ không tìm thấy.
+        """
 
     @abstractmethod
     async def patch_document_fields(self, document_id: DocumentId, fields: dict[str, Any]) -> None:

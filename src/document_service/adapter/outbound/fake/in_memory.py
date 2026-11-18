@@ -141,7 +141,7 @@ class InMemoryCatalog(MetadataCatalogPort, InMemoryAdapter):
         return EntityRef(entity_id=str(version.version_id), entity_type="file")
 
     async def patch_controlled_fields(
-        self, version_id: DocumentVersionId, fields: dict[str, Any]
+        self, document_id: DocumentId, version_id: DocumentVersionId, fields: dict[str, Any]
     ) -> None:
         """Cập nhật metadata kiểm soát của một phiên bản và entity đã lưu."""
         self._metadata.setdefault(str(version_id), {}).update(fields)

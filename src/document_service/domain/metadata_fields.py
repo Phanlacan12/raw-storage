@@ -34,3 +34,32 @@ DESCRIPTIVE_FIELDS: tuple[str, ...] = (
     "department",
     COLLECTION_ID,
 )
+
+# Mọi key được ghi vào `extension`. Khác với FILTERABLE_FIELDS: đó là tập con *phải
+# lọc được* (POC-19), còn đây là tập *phải đăng ký trước*. OpenMetadata từ chối ghi
+# một key chưa đăng ký với `400 Unknown custom field <tên>`, nên thiếu một tên ở đây
+# là hỏng ngay lệnh ghi đầu tiên. `tests/unit/test_metadata_fields.py` so hai tuple
+# này với output thật của CatalogMetadataBuilder để chúng không trôi khỏi nhau.
+VERSION_FIELDS: tuple[str, ...] = DESCRIPTIVE_FIELDS + (
+    DOCUMENT_ID,
+    DOCUMENT_VERSION_ID,
+    "original_file_name",
+    VERSION_LABEL,
+    STATUS,
+    CLASSIFICATION,
+    "format",
+    "size",
+    "checksum",
+    "storage_uri",
+)
+
+DOCUMENT_FIELDS: tuple[str, ...] = DESCRIPTIVE_FIELDS + (
+    DOCUMENT_ID,
+    CLASSIFICATION,
+    "retention_policy",
+    "current_version_id",
+)
+
+# `size` là số byte, gửi dạng int. Các trường còn lại là chuỗi (list được
+# `OmExtensionMapper.to_extension` nối bằng dấu phẩy trước khi gửi đi).
+INTEGER_FIELDS: frozenset[str] = frozenset({"size"})

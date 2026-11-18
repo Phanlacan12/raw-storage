@@ -30,6 +30,70 @@ from document_service.domain.value import (
 )
 from document_service.utils.clock import utc_now
 
+# `fileType` của File entity là ENUM của OpenMetadata, không phải MIME type. Đẩy
+# thẳng `application/pdf` vào đây thì server trả 400 `Cannot construct instance of
+# FileType`. MIME thật vẫn được giữ nguyên ở trường `format` trong `extension`, nên
+# không mất thông tin; ánh xạ này chỉ để chọn đúng nhãn mà OpenMetadata hiểu.
+_FILE_TYPE_ENUM = (
+    "Document",
+    "Spreadsheet",
+    "Presentation",
+    "Image",
+    "Video",
+    "Audio",
+    "PDF",
+    "Archive",
+    "Code",
+    "Data",
+    "CSV",
+    "Text",
+    "Other",
+)
+
+_MIME_EXACT: dict[str, str] = {
+    "application/pdf": "PDF",
+    "text/csv": "CSV",
+    "application/json": "Data",
+    "application/xml": "Data",
+    "text/xml": "Data",
+    "application/yaml": "Data",
+    "application/zip": "Archive",
+    "application/gzip": "Archive",
+    "application/x-tar": "Archive",
+    "application/x-7z-compressed": "Archive",
+    "application/vnd.rar": "Archive",
+    "application/msword": "Document",
+    "application/rtf": "Document",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "Document",
+    "application/vnd.oasis.opendocument.text": "Document",
+    "application/vnd.ms-excel": "Spreadsheet",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "Spreadsheet",
+    "application/vnd.oasis.opendocument.spreadsheet": "Spreadsheet",
+    "application/vnd.ms-powerpoint": "Presentation",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": "Presentation",
+    "application/vnd.oasis.opendocument.presentation": "Presentation",
+}
+
+_MIME_PREFIX: tuple[tuple[str, str], ...] = (
+    ("image/", "Image"),
+    ("video/", "Video"),
+    ("audio/", "Audio"),
+    ("text/", "Text"),
+)
+
+
+def _as_file_type(content_format: str | None) -> str:
+    """Ánh xạ MIME type sang enum `fileType` của OpenMetadata."""
+    if not content_format:
+        return "Other"
+    mime = content_format.split(";", 1)[0].strip().lower()
+    if mime in _MIME_EXACT:
+        return _MIME_EXACT[mime]
+    for prefix, file_type in _MIME_PREFIX:
+        if mime.startswith(prefix):
+            return file_type
+    return "Other"
+
 
 class OmExtensionMapper:
     """Chuyển dict metadata của kho thành `extension` và ngược lại."""
@@ -148,10 +212,16 @@ class OmFileEntityMapper:
             "displayName": f"{version.original_file_name} ({version.label})",
             "service": self._fqn.service_fqn,
             "directory": self._fqn.document_fqn(version.document_id),
-            "fileType": version.content_format or "Unknown",
+            "fileType": _as_file_type(version.content_format),
             "size": version.size_bytes,
             "checksum": str(version.checksum),
             "path": str(version.storage_uri),
+            # `columns` phải có mặt, kể cả rỗng. File tạo thiếu trường này thì mọi
+            # lệnh PATCH sau đó đều trả 500 `Cannot invoke "java.util.List.iterator()"
+            # because "updatedColumns" is null` — server duyệt danh sách columns khi
+            # so sánh phiên bản cũ/mới. Kho raw data không có khái niệm cột, nên để
+            # rỗng; đã đo: thiếu -> 500, có -> 200.
+            "columns": [],
             "extension": self._extensions.to_extension(metadata),
         }
 

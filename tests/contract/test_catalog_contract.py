@@ -161,7 +161,7 @@ class TestCatalogContract:
         version = _version(document, "0003", "1.0")
         await catalog.register_version(version, BUILDER.build(document, version))
         await catalog.patch_controlled_fields(
-            version.version_id, {"status": str(DocumentStatus.APPROVED)}
+            document.document_id, version.version_id, {"status": str(DocumentStatus.APPROVED)}
         )
         loaded = (await catalog.list_versions(document.document_id))[0]
         assert loaded.status is DocumentStatus.APPROVED
