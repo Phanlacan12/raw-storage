@@ -2,7 +2,7 @@
 
 > **Mục đích:** Mỗi module code xong phải đối chiếu với tài liệu thiết kế, ghi lại chỗ khớp, chỗ lệch có lý do và chỗ còn thiếu. Không để lệch âm thầm: lệch thì **hoặc** sửa code, **hoặc** sửa tài liệu, và ghi lý do ngay trong bảng.
 > **File này là nguồn sự thật duy nhất cho lượt refactor theo [c4-09 LLD](c4-09-lld.md).** Agent sửa code đọc đầu việc ở [mục 2b.1](#2b1-bảng-công-việc); agent đối soát ghi phán quyết vào đó và vào [mục 8](#8-sổ-đối-soát). Giao thức ở [mục 6](#6-giao-thức-đối-soát-bằng-agent). Điều kiện đóng lượt ở [mục 7](#7-ma-trận-đầy-đủ-tính-năng): mọi phần tử C1–C13, D1–D26, I1–I18, POC-01…28 phải có trạng thái, không dòng nào trống.
-> **Tiến độ hiện tại, 19/11/2026.** B1–B11 đã nghiệm thu theo các gate ở mục 8. B12 đã nghiệm thu sau đối soát lần 2. Lần `make test` đạt gần nhất sau B15/B19 có **322 passed, 5 skipped**, pylint **10.00/10**. Năm test tích hợp cần hạ tầng vẫn được bỏ qua.
+> **Tiến độ hiện tại, 20/11/2026.** B1–B16 và B18 đã nghiệm thu theo các gate ở mục 8. Lần `make test` sau GB16+18 đạt **332 passed, 5 skipped**, pylint **10.00/10**. Năm test tích hợp cần hạ tầng vẫn bỏ qua. Còn lại: B17 (Redis, chờ Docker), B20 (test kiến trúc AST), B21 (đồng bộ tài liệu), rồi GT và G2 đóng lượt.
 > **Lượt 3 khác hai lượt trước ở chỗ:** hai lượt đầu đối chiếu code với tài liệu như tài liệu đang có. Lượt này đối chiếu **cả hai** với đề bài, nên tìm ra lỗi ở phía tài liệu (đã sửa, xem [README mục 6](README.md#6-lịch-sử-rà-soát)) và **20 điểm lệch ở phía code** (mục 2b). Vì vậy một số dòng trước đây ghi `Khớp` nay đổi trạng thái: không phải code thay đổi, mà là tiêu chuẩn đối chiếu đã đúng hơn.
 > **Ánh xạ module ↔ D1–D18:** [src/README.md](../src/README.md).
 
@@ -14,9 +14,10 @@
 | B12 | Đã nghiệm thu GB12 lần 2 | 312 test qua; cache hết TTL, sai người, proxy và tài liệu mất đều được kiểm |
 | B13–B14 | Đã nghiệm thu | 57 test tập trung qua; toàn suite 321 passed, 5 skipped, pylint 10.00/10 |
 | B15, B19 | Đã nghiệm thu | 322 passed, 5 skipped; sáu ví dụ chạy thành công |
-| B16–B17 | Đang chuẩn bị trong thư mục tạm | Upload stream, multipart và khóa Redis |
-| B18 | Đang chuẩn bị trong thư mục tạm | Deadline, executor, cache lineage và sync |
-| B20–B21, GT, G2 | Chưa thực hiện | Kiểm luật kiến trúc, đồng bộ tài liệu và đối soát cuối |
+| B16 | **Đã nghiệm thu (GB16+18, 20/11)** | 332 passed, 5 skipped; upload stream + multipart, source stream từ `Path`, test không parse nội dung |
+| B17 | **Chưa thực hiện — cần Docker** | `RedisDocumentLock` theo LLD mục 12; tạm thời khóa trong tiến trình chỉ dùng được 1 instance |
+| B18 | **Đã nghiệm thu (GB16+18, 20/11)** | Deadline qua ContextVar không đổi port, hai `OmHttpClient` tách catalog/lineage, bỏ bọc hai lớp, `_VersionIndex` TTL + `forget`, sync key gồm `document_id`, bỏ executor `idp` |
+| B20, B21, GT, G2 | Chưa thực hiện | Viết lại test kiến trúc AST → đồng bộ `c4-04b`/`c4-09` → đối soát bất biến → đóng lượt |
 
 Thay đổi trong thư mục tạm được tích hợp và nghiệm thu theo thứ tự của kế hoạch. Trạng thái `Đã sửa` trong mục 2b.1 dành cho các ID đã có kết luận gate.
 
