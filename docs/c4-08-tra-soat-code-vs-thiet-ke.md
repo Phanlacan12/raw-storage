@@ -23,22 +23,22 @@ Thay đổi trong thư mục tạm được tích hợp và nghiệm thu theo th
 
 ## 1. Checkpoint theo module
 
-Bảng dưới ghi checkpoint của lượt triển khai nền trước refactor. Các mã B trong bảng này thuộc lượt nền. Tiến độ B1–B21 hiện tại nằm ở bảng trên và mục 2b.1.
+Bảng dưới ghi checkpoint của lượt triển khai nền trước refactor (18/11/2026). Các mã B trong bảng này thuộc lượt nền, **không** trùng với B1–B21 ở bảng tiến độ đầu sổ. Cột **Trạng thái** đã được cập nhật sau lượt refactor theo c4-09: các dòng từng ghi `Lệch` nay là `Khớp sau refactor` với tham chiếu sang ID đã đóng ở mục 2b.1. Nhật ký lệch cũ (L1–L13) giữ ở mục 2.
 
 | # | Module | Phần tử trong docs | Trạng thái | Ghi chú |
 |---|---|---|---|---|
 | — | *Các bước B1–B21 của lượt refactor theo c4-09 ghi vào đây khi gate tương ứng chạy; trạng thái từng ID ở mục 2b.1* | | | |
 | B0 | `configs/*.yml` | c4-04b mục 2 (cấu hình ngoài mã nguồn), mục 11.3 | **Khớp** | 10 file theo khối; thứ tự ưu tiên init → env → `.env` → YAML → mặc định; bí mật chỉ qua env |
 | B1 | `config.py`, `utils/`, `infrastructure/container.py`, `main.py` | c4-04b mục 2, 2.1, 2.2 | **Khớp** | `SingletonMeta` dùng `RLock` (xem Lệch L1) |
-| B2 | `domain/` | c4-04 mục 4.1–4.3, c4-04b mục 3 | **Lệch** | 8 port là ABC; 4 policy kế thừa `DomainPolicy`; I1–I14 có test. Nhưng I15–I18 (mới) chưa có gì, và hai lỗi dữ liệu: X1 chiều quan hệ, X2 `approved_by` của bản Draft bị loại bỏ |
-| B3 | `application/` | c4-04b mục 6, 7; c4-05 luồng 1, 2 | **Lệch** | Xem Lệch L2, L3 và X3 (thiếu intent `StatusChangePending`), X4 (audit thiếu trạng thái trước), X5 (không xác nhận checksum) |
+| B2 | `domain/` | c4-04 mục 4.1–4.3, c4-04b mục 3 | **Khớp sau refactor** | 8 port là ABC; 6 policy kế thừa `DomainPolicy`; I1–I14 có test. X1 đã đóng ở B4 (RelatedEdge), X2 đã đóng ở B2 (bản Draft loại bỏ không ghi `approved_by`), I16 đã đóng ở B4; I15/I17/I18 ngoài phạm vi (D23/D25). Chi tiết ở mục 2b.1 |
+| B3 | `application/` | c4-04b mục 6, 7; c4-05 luồng 1, 2 | **Khớp sau refactor** | Lệch L2, L3 vẫn giữ làm nhật ký hiện thực. X3 đã đóng ở B9 (intent `StatusChangePending` + `StatusChangeSaga`), X4 đã đóng ở B7 (audit from→to), X5 đã đóng ở B6 (checksum đọc lại từ storage). Chi tiết ở mục 2b.1 |
 | B4 | `infrastructure/resilience/` | c4-04b mục 11.1–11.5 | **Khớp** | `BackoffStrategy` → `FullJitterBackoff`/`FixedBackoff`; một executor cho mỗi phụ thuộc |
-| B5 | `adapter/outbound/openmetadata/` | c4-04b mục 4, 5, 8, 9 | **Khớp, chưa xác minh trên bản thật** | Đường dẫn API theo bảng mục 5 nhưng **chỉ test bằng respx**; phải đối chiếu OpenAPI của bản được chốt |
+| B5 | `adapter/outbound/openmetadata/` | c4-04b mục 4, 5, 8, 9 | **Khớp, chưa xác minh trên bản thật** | Đường dẫn API theo bảng mục 5; test bằng respx + fake server có routes lineage (B5 thêm). `OmLineageRelationshipStore` đã vào contract parametrize (X39 đóng). Vẫn phải đối chiếu OpenAPI của bản OpenMetadata thật trong POC-19 |
 | B6 | `adapter/outbound/` còn lại | c4-04b mục 9, 10.3, 11.6 | **Khớp** | 3 hiện thực intent store; `PresignedUrlIssuer`/`ProxyStreamer` tách riêng; `MetricsRecorder` theo mục 11.7 |
 | B6b | Health ở lớp outbound | c4-04b mục 10.2 | **Khớp** | `HealthProbe` ở `infrastructure/health.py`; mỗi adapter hiện thực `_probe_dependency()`; xem Lệch L4 |
-| B7 | `adapter/inbound/` | c4-04b mục 10.4, 12 | **Lệch** | Gồm D17 `sync/` (Thiếu T1). Lệch: X6 endpoint chuyển trạng thái không bắt `Idempotency-Key`, X7 upload buffer toàn bộ file trong RAM, X10 hai API danh sách không phân trang. Thiếu hẳn nhóm endpoint của D23, D24, D25 |
+| B7 | `adapter/inbound/` | c4-04b mục 10.4, 12 | **Khớp sau refactor** | X6 đã đóng ở B8 (`/status` dùng `WriteCtx`), X7 đã đóng ở B16 (upload stream + multipart), X10 đã đóng ở B14 (`Page[T]` + con trỏ cho audit và relationships), X47 đã đóng ở B14 (endpoint `/documents/{id}/versions`). Nhóm endpoint của D23/D24/D25 vẫn ngoài phạm vi (đã chốt). Chi tiết ở mục 2b.1 |
 | B8 | `worker/reconcile.py` | c4-04b mục 7; c4-05 luồng 7 | **Khớp** | `IntentRecoveryJob`, `OrphanObjectScanner`, `DanglingEntityScanner`, CLI |
-| B6c | Outbox dispatcher | c4-02 C10, c4-04b mục 11.7; POC-11 | **Thiếu tiến trình chạy** | `SqliteOutbox` + `OutboxEventPublisher` + `WebhookEventSender` + `OutboxDispatcher` đều có và có test; phụ thuộc `events` có executor riêng (Lệch L12). Nhưng **không có tiến trình nào gọi `run_once()` theo chu kỳ** — xem X8 |
+| B6c | Outbox dispatcher | c4-02 C10, c4-04b mục 11.7; POC-11 | **Khớp sau refactor** | `SqliteOutbox` + `OutboxEventPublisher` + `WebhookEventSender` + `OutboxDispatcher` đã tách 3 file ở B1; `worker/dispatch.py` là tiến trình chạy chu kỳ (X8 đóng ở B15). B1 cũng tách `outbox` và `audit` thành hai executor riêng khỏi `intent_store` |
 | B9 | `tests/` | c4-04b mục 13, 14 | **Khớp** | Đủ 6 bộ contract test: catalog (fake + OpenMetadata qua server giả lập), relationship, intent (3 hiện thực), object store (fake + moto), policy decision, event publisher |
 | B9b | `examples/` | plan B9b | **Khớp** | 6 ví dụ không cần hạ tầng + 1 ví dụ cần hạ tầng tự in hướng dẫn; `make examples` chạy tuần tự |
 | B10 | `deploy/`, `.github/workflows/` | c4-06 mục 6.1, 6.5 | **Khớp sau khi sửa tài liệu** | compose có healthcheck; CI theo khuôn repo mẫu, thêm cổng kiểm tra sơ đồ mermaid. Trước 19/11 sơ đồ 6.1 vẽ `document-service`, `reconciler`, `intent-store`, `mock-downstream` như container compose trong khi compose chỉ có 4 container hạ tầng — **tài liệu sai, không phải code sai**, đã sửa. Còn thiếu thật: IdP thử nghiệm (PoC đang dùng `AUTHENTICATION_PROVIDER=basic`, POC-04 chưa chạy được) và mock downstream (POC-11) |
