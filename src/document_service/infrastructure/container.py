@@ -228,7 +228,14 @@ class ServiceContainer(metaclass=SingletonMeta):
 
     def _build_real_ports(self) -> PortBundle:
         """Bộ adapter dùng OpenMetadata, Object Storage và registry sqlite."""
-        database = SqliteDatabase(self._settings.intent.sqlite_path)
+        # Dùng chung một SqliteDatabase khi hai path trỏ cùng file (mặc định);
+        # tách khi cấu hình cho relationship một path riêng (X35, c4-09 mục 14).
+        intent_path = self._settings.intent.sqlite_path
+        relationship_path = self._settings.relationship.sqlite_path
+        database = SqliteDatabase(intent_path)
+        relationship_database = (
+            database if relationship_path == intent_path else SqliteDatabase(relationship_path)
+        )
         catalog_client = OmHttpClient(self._settings.catalog, self._executors.get("catalog"))
         catalog = OpenMetadataCatalogAdapter(
             catalog_client, self._settings.catalog, self._executors.get("catalog")
@@ -244,7 +251,7 @@ class ServiceContainer(metaclass=SingletonMeta):
         relationships = (
             OmLineageRelationshipStore(lineage_client, self._executors.get("relationship_store"))
             if self._settings.relationship.kind is RelationshipStoreKind.LINEAGE
-            else SqliteRelationshipRegistry(database, self._executors.get("relationship_store"))
+            else SqliteRelationshipRegistry(relationship_database, self._executors.get("relationship_store"))
         )
         intents = (
             S3ManifestIntentStore(

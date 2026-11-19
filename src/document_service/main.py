@@ -66,7 +66,7 @@ class ApplicationFactory:
         """Dựng ứng dụng với router, handler lỗi và lifespan khởi động."""
         settings = self._container.settings
         application = FastAPI(
-            title="Document Service",
+            title=settings.app.service_name,
             version="0.1.0",
             description="Kho raw data dung chung: Object Storage S3 + OpenMetadata",
             lifespan=self._lifespan,
