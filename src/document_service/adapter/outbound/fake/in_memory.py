@@ -12,6 +12,7 @@ import copy
 from datetime import datetime, timedelta
 from typing import Any, AsyncIterator, Awaitable, Callable, TypeVar
 
+from document_service.config import LockSettings
 from document_service.domain.dto import (
     Decision,
     EntityRef,
@@ -531,16 +532,32 @@ class InMemoryAuditLog(AuditPort, InMemoryAdapter):
 class InMemoryDocumentLock(DocumentLockPort, InMemoryAdapter):
     """Khóa trong tiến trình, đủ cho một instance và cho test.
 
-    Chạy nhiều instance cần khóa phân tán; đó là việc còn lại đã nêu trong plan.
+    Nhận `LockSettings` để có **cùng chế độ lỗi** với `RedisDocumentLock` khi
+    `acquire_timeout_seconds` dương: không lấy được khóa trong hạn thì ném
+    `ConcurrencyConflictError`, nhờ đó bộ contract test chạy được trên cả hai.
+    Không truyền `settings` thì giữ hành vi cũ — chờ vô thời hạn.
     """
 
-    def __init__(self) -> None:
-        """Khởi tạo bảng khóa theo document_id."""
+    def __init__(self, settings: LockSettings | None = None) -> None:
+        """Khởi tạo bảng khóa theo document_id và nhận cấu hình timeout tùy chọn."""
         InMemoryAdapter.__init__(self, "document_lock", DependencyKind.REQUIRED_FOR_WRITE)
         self._locks: dict[str, asyncio.Lock] = {}
+        self._settings = settings
 
     async def with_lock(self, document_id: DocumentId, operation: Callable[[], Awaitable[T]]) -> T:
         """Chạy thao tác trong khóa của tài liệu."""
         lock = self._locks.setdefault(str(document_id), asyncio.Lock())
-        async with lock:
+        timeout = self._settings.acquire_timeout_seconds if self._settings is not None else None
+        if timeout is None:
+            await lock.acquire()
+        else:
+            try:
+                await asyncio.wait_for(lock.acquire(), timeout=timeout)
+            except asyncio.TimeoutError as error:
+                raise ConcurrencyConflictError(
+                    f"timed out waiting for lock on document {document_id}"
+                ) from error
+        try:
             return await operation()
+        finally:
+            lock.release()

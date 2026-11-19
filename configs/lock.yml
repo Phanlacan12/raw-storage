@@ -1,0 +1,12 @@
+# Khóa phân tán C13 (quyết định Q12). kind=in_memory CHỈ chạy được MỘT instance.
+# Từ 2 instance C1 trở lên, kind phải là redis, không thì mất I4/I5 mà không lỗi báo.
+# BÍ MẬT: mật khẩu redis đi qua DS_LOCK__REDIS_URL, không đặt ở đây.
+lock:
+  kind: in_memory
+  redis_url: redis://localhost:6379/0
+  key_prefix: "ds:lock"
+  lease_seconds: 15.0
+  renew_interval_seconds: 5.0
+  acquire_timeout_seconds: 0.5
+  acquire_retry_delay_seconds: 0.05
+  cancel_on_lease_loss: true

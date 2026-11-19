@@ -34,6 +34,7 @@ CONFIG_FILE_ORDER = (
     "storage.yml",
     "intent_store.yml",
     "relationship_store.yml",
+    "lock.yml",
     "security.yml",
     "resilience.yml",
     "health.yml",
@@ -67,6 +68,13 @@ class RelationshipStoreKind(StrEnum):
 
     SQLITE = "sqlite"
     LINEAGE = "lineage"
+
+
+class LockKind(StrEnum):
+    """Hai hiện thực của document lock, ứng với quyết định Q12 (C13)."""
+
+    IN_MEMORY = "in_memory"
+    REDIS = "redis"
 
 
 class AppSettings(BaseModel):
@@ -130,6 +138,23 @@ class RelationshipStoreSettings(BaseModel):
     sqlite_path: str = "local_data/document_service.sqlite"
 
 
+class LockSettings(BaseModel):
+    """Cấu hình khóa tài liệu C13 (configs/lock.yml).
+
+    Quyết định Q12: `in_memory` chỉ chạy được một instance C1; triển khai nhiều
+    instance bắt buộc `redis`, không thì mất I4/I5 mà không có lỗi báo.
+    """
+
+    kind: LockKind = LockKind.IN_MEMORY
+    redis_url: str = "redis://localhost:6379/0"
+    key_prefix: str = "ds:lock"
+    lease_seconds: float = 15.0
+    renew_interval_seconds: float = 5.0
+    acquire_timeout_seconds: float = 0.5
+    acquire_retry_delay_seconds: float = 0.05
+    cancel_on_lease_loss: bool = True
+
+
 class SecuritySettings(BaseModel):
     """Cấu hình định danh và phân quyền (configs/security.yml)."""
 
@@ -142,7 +167,6 @@ class SecuritySettings(BaseModel):
     approver_groups: list[str] = Field(default_factory=lambda: ["document-approvers"])
     require_idempotency_key: bool = True
     policy_cache_ttl_seconds: int = 300
-    lock_timeout_seconds: float = 5.0
 
 
 class DependencyResiliencePolicy(BaseModel):
@@ -185,6 +209,15 @@ class ResilienceSettings(BaseModel):
         )
     )
     relationship: DependencyResiliencePolicy = Field(default_factory=DependencyResiliencePolicy)
+    lock: DependencyResiliencePolicy = Field(
+        default_factory=lambda: DependencyResiliencePolicy(
+            connect_timeout_seconds=0.3,
+            read_timeout_seconds=1.0,
+            total_timeout_seconds=1.0,
+            max_attempts=1,
+            open_duration_seconds=5.0,
+        )
+    )
     events: DependencyResiliencePolicy = Field(
         default_factory=lambda: DependencyResiliencePolicy(
             read_timeout_seconds=3.0, total_timeout_seconds=5.0, max_attempts=2
@@ -253,6 +286,7 @@ class Settings(BaseSettings):
     storage: StorageSettings = Field(default_factory=StorageSettings)
     intent: IntentStoreSettings = Field(default_factory=IntentStoreSettings)
     relationship: RelationshipStoreSettings = Field(default_factory=RelationshipStoreSettings)
+    lock: LockSettings = Field(default_factory=LockSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
     resilience: ResilienceSettings = Field(default_factory=ResilienceSettings)
     health: HealthSettings = Field(default_factory=HealthSettings)

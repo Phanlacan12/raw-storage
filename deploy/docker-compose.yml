@@ -114,6 +114,23 @@ services:
       - "8333:8333"
       - "9333:9333"
 
+  # Redis dùng cho khóa phân tán C13. Hai lựa chọn cố ý (c4-09 mục 12):
+  # - TẮT persistence (`--appendonly no --save ""`): một khóa sống sót qua restart
+  #   còn tệ hơn mất khóa, vì TTL của lease đã là giới hạn trên của thời gian giữ.
+  # - `noeviction`: với `allkeys-lru`, Redis có thể xóa một khóa ĐANG được giữ khi
+  #   đầy bộ nhớ — sai lầm không thể chấp nhận cho mutex.
+  redis:
+    image: redis:7.4-alpine
+    container_name: rs-redis
+    command: ["redis-server", "--appendonly", "no", "--save", "", "--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    ports:
+      - "6379:6379"
+
 # Không khai báo `volumes:` nữa. Dữ liệu nằm ngay trong deploy/data/ để nhìn thấy và
 # xoá được bằng tay, thay vì nằm trong vùng quản lý riêng của Docker.
 # `make compose-down` vẫn dọn container; muốn xoá dữ liệu thì xoá deploy/data/.

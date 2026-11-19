@@ -27,6 +27,7 @@ from document_service.adapter.outbound.fake.in_memory import (
 )
 from document_service.adapter.outbound.intent.s3_manifest_store import S3ManifestIntentStore
 from document_service.adapter.outbound.intent.sqlite_store import SqliteRegistryIntentStore
+from document_service.adapter.outbound.lock.redis_lock import RedisDocumentLock
 from document_service.adapter.outbound.observability.audit_log import StructuredAuditLogger
 from document_service.adapter.outbound.observability.metrics import MetricsRecorder
 from document_service.adapter.outbound.observability.outbox_dispatcher import (
@@ -52,6 +53,7 @@ from document_service.application.factory import UseCaseFactory
 from document_service.config import (
     AdapterProfile,
     IntentStoreKind,
+    LockKind,
     RelationshipStoreKind,
     Settings,
     get_settings,
@@ -63,6 +65,7 @@ from document_service.domain.policy import (
     RelationshipPolicy,
     VersionPolicy,
 )
+from document_service.domain.port import DocumentLockPort
 from document_service.infrastructure.health import HealthProbeMixin
 from document_service.infrastructure.resilience.executor import (
     ExecutorRegistry,
@@ -190,6 +193,7 @@ class ServiceContainer(metaclass=SingletonMeta):
         self._executors.register("object_store", resilience.storage)
         self._executors.register("intent_store", resilience.intent)
         self._executors.register("relationship_store", resilience.relationship)
+        self._executors.register("document_lock", resilience.lock)
         # Executor `idp` đã bị loại (X50, c4-09 mục 5.3): OidcTokenVerifier không
         # nhận executor nào, nên khối `resilience.idp` cũ hoàn toàn vô tác dụng.
         self._executors.register("events", resilience.events)
@@ -202,6 +206,12 @@ class ServiceContainer(metaclass=SingletonMeta):
             return self._build_fake_ports()
         return self._build_real_ports()
 
+    def _build_locks(self) -> DocumentLockPort:
+        """Chọn khóa theo `lock.kind`, không theo `app.profile` (c4-09 mục 12)."""
+        if self._settings.lock.kind is LockKind.REDIS:
+            return RedisDocumentLock(self._settings.lock, self._executors.get("document_lock"))
+        return InMemoryDocumentLock(self._settings.lock)
+
     def _build_fake_ports(self) -> PortBundle:
         """Bộ adapter in-memory, chạy không cần hạ tầng."""
         catalog = InMemoryCatalog()
@@ -213,7 +223,7 @@ class ServiceContainer(metaclass=SingletonMeta):
             policies=AllowAllPolicyDecision(catalog),
             events=InMemoryEventPublisher(),
             audit=InMemoryAuditLog(),
-            locks=InMemoryDocumentLock(),
+            locks=self._build_locks(),
         )
 
     def _build_real_ports(self) -> PortBundle:
@@ -254,7 +264,7 @@ class ServiceContainer(metaclass=SingletonMeta):
             policies=CachingPolicyDecision(catalog, self._settings.security),
             events=OutboxEventPublisher(SqliteOutbox(database), self._executors.get("outbox")),
             audit=StructuredAuditLogger(database, self._executors.get("audit")),
-            locks=InMemoryDocumentLock(),
+            locks=self._build_locks(),
         )
 
     def _build_policies(self) -> PolicySet:
