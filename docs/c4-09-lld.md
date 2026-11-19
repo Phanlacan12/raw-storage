@@ -946,7 +946,6 @@ Hai điều về lineage phải giữ đúng, vì chúng là đặc thù của O
 | Object Storage | `object_store` | `S3ObjectStoreAdapter._call` | `S3ObjectStoreAdapter` |
 | Intent / audit / outbox store | `intent_store` | `SqliteRegistryIntentStore._call`, `StructuredAuditLogger._call`, `OutboxEventPublisher._call` | dùng chung một breaker — chúng là **cùng một** sqlite database |
 | Webhook downstream | `events` | `WebhookEventSender._operation` | `WebhookEventSender` |
-| IdP (JWKS) | `idp` | **không ai** — xem L-EX1 bên dưới | **không có** |
 | Khóa phân tán | `document_lock` **(B17)** | `RedisDocumentLock._call` | `RedisDocumentLock` |
 
 **Hai luật, cả hai đang bị vi phạm:**
@@ -954,7 +953,7 @@ Hai điều về lineage phải giữ đúng, vì chúng là đặc thù của O
 > **L-EX1. Mỗi phụ thuộc đúng một chủ sở hữu breaker, và chủ sở hữu phải là lớp thực sự gọi ra ngoài.**
 > Hiện `OmLineageRelationshipStore` nhận executor `relationship_store` nhưng mọi lời gọi của nó đi qua `OmHttpClient` dùng executor `catalog`. Hệ quả: executor `relationship_store` không bao giờ thấy traffic, breaker của nó luôn `CLOSED`, và `check_health()` của lineage store đọc một breaker vô nghĩa. Khối `resilience.relationship` trong cấu hình cũng không có tác dụng. B18 cấp cho lineage store một `OmHttpClient` riêng dựng trên executor `relationship_store`.
 
-> **L-EX1 bị vi phạm lần thứ hai, ở `idp`.** Executor `idp` được đăng ký (`container.py:185`) nhưng **không nơi nào gọi `get("idp")`**. `OidcTokenVerifier.__init__(self, settings)` không nhận executor nào, và `PrincipalResolver` được dựng chỉ với settings. Nên khối `resilience.idp` trong cấu hình hoàn toàn vô tác dụng, và `IdpHealthIndicator` không đọc breaker nào. Cùng một loại lỗi với `relationship_store`, chỉ khác là ở đây không có cả dây nối.
+> **L-EX1 trước đây bị vi phạm lần thứ hai ở `idp`, đã sửa ở B18 (X50).** Executor `idp` không có người gọi `get("idp")`; B18 gỡ hẳn `register("idp", ...)` khỏi `container` và khối `resilience.idp` khỏi `configs/resilience.yml`/`ResilienceSettings`. `IdpHealthIndicator` vẫn hoạt động dựa trên `OidcTokenVerifier.jwks_available`, không cần executor.
 
 > **L-EX2. Không bọc executor hai lần.**
 > Hiện `S3ManifestIntentStore._call(lambda: self._objects.put_overwrite(...))` đi qua executor `intent_store` rồi vào `S3ObjectStoreAdapter._call` với executor `object_store`. Số lần retry nhân nhau (3 × 3 = 9) và hai breaker cùng đếm một lỗi. B18 bỏ lớp bọc ngoài: adapter nào uỷ quyền cho một adapter khác thì **không** tự bọc thêm.
@@ -1288,9 +1287,9 @@ Thứ tự trong `__init__`, không lazy:
 ```text
 1. settings            ← get_settings()
 2. LoggingConfigurator().configure(level, json_format)
-3. ExecutorRegistry()  ← _register_executors(): 6 hiện có + document_lock (B17)
+3. ExecutorRegistry()  ← _register_executors(): 6 executor sau B18/B17
                          catalog · object_store · intent_store · relationship_store
-                         idp (đăng ký nhưng KHÔNG ai get) · events
+                         events · document_lock (B17); `idp` đã gỡ ở B18 (X50)
 4. ports               ← _build_ports() → _build_fake_ports() | _build_real_ports()
 5. policies            ← _build_policies()
 6. builder             ← CatalogMetadataBuilder()
@@ -1937,8 +1936,8 @@ Gate `GT` của kế hoạch phán quyết đúng điểm này cho **15 bất bi
 | `relationship_store.yml` | `relationship` | `kind` (**Q4**), `sqlite_path` **(B18: hiện không ai đọc)** |
 | `lock.yml` **(B17)** | `lock` | `kind` (**Q12**), `redis_url` (env cho password), `key_prefix`, `lease_seconds`, `renew_interval_seconds`, `acquire_timeout_seconds`, `acquire_retry_delay_seconds`, `cancel_on_lease_loss` |
 | `security.yml` | `security` | `auth_disabled`, `oidc_*`, `admin_groups`/`writer_groups`/`approver_groups`, `require_idempotency_key`, `policy_cache_ttl_seconds`; **bỏ `lock_timeout_seconds` (B17)** |
-| `resilience.yml` | `resilience` | 6 khối hiện có: `catalog`, `storage`, `intent`, `relationship`, `idp` (**không ai dùng**, xem mục 5.3), `events`; thêm **`lock` (B17)** |
-| `health.yml` | `health` | `cache_ttl_seconds` **(knob chết)**, `probe_timeout_seconds` (đọc ở `health_routes.py:39,51`), `backlog_threshold` (đọc ở `container.py:270`), `startup_deadline_seconds` **(knob chết)**, `expose_details` (đọc ở `health_routes.py:49`) |
+| `resilience.yml` | `resilience` | 6 khối sau B18: `catalog`, `storage`, `intent`, `relationship`, `events`, **`lock` (B17)** — khối `idp` đã gỡ ở B18 (X50) |
+| `health.yml` | `health` | sau B12 đã nối 4 knob: `cache_ttl_seconds` (B12), `probe_timeout_seconds` (đọc ở `health_routes.py:39,51`), `backlog_threshold` (đọc ở `container.py:270`), `startup_deadline_seconds` (B12), `expose_details` (đọc ở `health_routes.py:49`) — không còn knob chết thuộc khối này |
 | `sync.yml` | `sync` | `enabled`, `interval_seconds`, `batch_size`, `sources[]` |
 | `events.yml` | `events` | `enabled`, `webhook_urls`, `batch_size`, `interval_seconds`, `max_attempts` |
 
@@ -1951,8 +1950,8 @@ Gate `GT` của kế hoạch phán quyết đúng điểm này cho **15 bất bi
 | `storage.multipart_threshold_bytes` | B16 (đường multipart dùng nó) |
 | `relationship.sqlite_path` | B18 |
 | `security.lock_timeout_seconds` | B17 (chuyển sang `configs/lock.yml`) |
-| `health.cache_ttl_seconds`, `health.startup_deadline_seconds` | B12 |
-| executor `idp` — đăng ký mà không ai `get("idp")`, nên cả khối `resilience.idp` vô tác dụng | B18 |
+| ~~`health.cache_ttl_seconds`, `health.startup_deadline_seconds`~~ — đã nối ở B12 | B12 |
+| ~~executor `idp`~~ — đã gỡ ở B18 (X50) | B18 |
 
 `storage.object_prefix` **không** thuộc danh sách này: nó có một người đọc (`worker/reconcile.py:196`) nhưng `StorageUri.for_version` lại hard-code `objects/` — một lỗi khác và nguy hiểm hơn, xem mục 3.2.
 
@@ -2006,7 +2005,7 @@ Hai luật `L-EX1` và `L-EX2` ở [mục 5.3](#53-bản-đồ-executor--ai-sở
 | Mọi `WriteUseCase` gọi `_record` | tập đường dẫn chấm của mọi `ast.Call` trong class phải chứa `_record` |
 | `ApproveVersionUseCase` đi qua `LifecyclePolicy.transition` | tập đó phải chứa `self._policies.lifecycle.transition` |
 | `DeclareRelationshipUseCase` kiểm rebind | phải chứa `assert_target_not_rebound` |
-| Intent được ghi **trước** khi chạm phụ thuộc ngoài | trong mỗi `WriteUseCase` có `intents.create`, `lineno` của nó nhỏ hơn `lineno` của **mọi** lời gọi chứa `objects.`, `_saga.` hoặc `patch_` |
+| Intent được ghi **trước** khi chạm phụ thuộc ngoài | trong mỗi `WriteUseCase` có `intents.create`, `lineno` của nó nhỏ hơn `lineno` của **mọi** lời gọi chứa `objects.`, `_saga` hoặc `patch_` (marker `_saga` không có dấu chấm cuối để bắt helper `_run_saga`) |
 | Tập use case ghi **tự phát hiện** | mọi `ClassDef` có base `WriteUseCase` (kể cả `ast.Subscript`); assert tập **không rỗng** |
 | Bề mặt port đóng băng | `ClassDef` kế thừa `ABC` trong `domain/port.py` đúng 8 tên |
 

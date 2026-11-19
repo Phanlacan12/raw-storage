@@ -74,6 +74,7 @@
 | D24 | Collection Manager | 2.2, 2.8 | POC-05, 27 |
 | D25 | Retention & Deletion Manager | 2.2, 2.5, 2.6 | POC-11, 15, 23, 25 |
 | D26 | Outbox Dispatcher — **thuộc C10** | 2.5 | POC-11 |
+| D27 | Hạ tầng xuyên suốt — `ServiceContainer`, `UseCaseFactory`, `ExecutorRegistry`, `ResilientCallExecutor`, `RetryPolicy`, `BackoffStrategy`, `RetryBudget`, `CircuitBreaker`, `Bulkhead`, `TimeoutPolicy`, `Deadline`, `ClassifiedError`, `HealthProbe`, `HealthIndicator`, `HealthResult`, `HealthReport`, `ReadinessPolicy`, `HealthCheckRegistry`, `DegradedModeGate`, `MetricsRecorder`; dùng chung cho C1/C8/C10 | — | — |
 
 ## 2. Ánh xạ yêu cầu chức năng sang phần tử
 

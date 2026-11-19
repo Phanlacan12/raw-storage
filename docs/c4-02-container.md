@@ -34,7 +34,7 @@ flowchart TB
             C10["Outbox Dispatcher<br/>[Container · Tự phát triển]<br/>Tiến trình riêng; đọc outbox và<br/>phát sự kiện cho downstream"]
         end
 
-        C7[("C7 Service State Store<br/>[Datastore · Cần PoC về sản phẩm]<br/>4 schema: upload_intent · relationship<br/>audit_event · outbox_event")]
+        C7[("C7 Service State Store<br/>[Datastore · Cần PoC về sản phẩm]<br/>4 schema: processing_intent · relationship<br/>audit_event · outbox_event")]
         C13["Distributed Lock<br/>[Container · Tùy chọn — bắt buộc khi nhiều instance]<br/>Tuần tự hoá theo document_id"]
 
         subgraph CATP["Metadata Catalog platform — OpenMetadata (Q1 đã chốt)"]
@@ -116,7 +116,7 @@ flowchart TB
 | C4 | Catalog Search Index | Elasticsearch / OpenSearch | Index phục vụ tra cứu, lọc kết hợp và phân trang | Có sẵn + Cần PoC về field được index | POC-02, 16, 19 |
 | C5 | Catalog Ingestion | Airflow (theo sản phẩm) | **Chỉ dùng để khảo sát metadata nguồn.** Không dùng làm đường ghi chính vì connector catalog thường thu thập metadata, chưa chắc sao chép file | Tùy chọn | POC-12 |
 | C6 | **Object Storage tương thích S3** | Dịch vụ S3-compatible sẵn có của tổ chức **[cần xác định]**; nếu tự vận hành: Ceph RGW / SeaweedFS / Garage | Lưu object bất biến theo `document_version_id`; versioning, object lock, retention, mã hóa khi lưu, link tải có thời hạn | Có sẵn | POC-01, 15 |
-| C7 | **Service State Store** | Biến thể A: manifest JSON trên S3 (chỉ cho schema intent). Biến thể B: registry DB — sqlite ở PoC, PostgreSQL/MySQL khi triển khai | Bốn schema: `upload_intent` (`Received → ObjectStored → CatalogRegistered → StatusChangePending → Completed / Failed / RetryPending`), `audit_event` truy vấn được theo `document_id`, `outbox_event`, và `relationship` nếu Q4 chọn registry | Cần PoC về sản phẩm; **đã có bằng chứng nghiêng về biến thể B**, xem [c4-08 mục 4](c4-08-tra-soat-code-vs-thiet-ke.md) | POC-08, 11, 14, 18, 21, 22 |
+| C7 | **Service State Store** | Biến thể A: manifest JSON trên S3 (chỉ cho schema intent). Biến thể B: registry DB — sqlite ở PoC, PostgreSQL/MySQL khi triển khai | Bốn schema: `processing_intent` (`Received → ObjectStored → CatalogRegistered → StatusChangePending → Completed / Failed / RetryPending`), phân loại qua `IntentKind`, `audit_event` truy vấn được theo `document_id`, `outbox_event`, và `relationship` nếu Q4 chọn registry | Cần PoC về sản phẩm; **đã có bằng chứng nghiêng về biến thể B**, xem [c4-08 mục 4](c4-08-tra-soat-code-vs-thiet-ke.md) | POC-08, 11, 14, 18, 21, 22 |
 | C8 | **Reconciliation & Recovery Worker** | Tiến trình riêng, chạy theo chu kỳ hoặc gọi bằng CLI | Đối soát hai chiều: object chưa đăng ký, entity trỏ tới object mất/hỏng, intent bị gián đoạn; retry idempotent; cảnh báo và chuyển xử lý thủ công khi vượt ngưỡng | Tự phát triển | POC-08, 18, 21 |
 | C9 | Search / Query Gateway | API service | Chỉ bổ sung nếu cần tách tải tra cứu khỏi C1, hoặc nếu lọc quyền tại C1 không đạt yêu cầu hiệu năng. **Việc lọc quyền kết quả tra cứu không tùy chọn** — nó luôn xảy ra, ở C1 (D18) hoặc ở đây | Tùy chọn | POC-17, 19, 20 |
 | C10 | **Outbox Dispatcher** | Tiến trình riêng + webhook/queue | Đọc `outbox_event` ở C7 và phát sự kiện tài liệu mới, phiên bản mới, chuyển trạng thái, thay đổi quyền, thu hồi, xóa; bảo đảm phát hiện được sự kiện thất lạc. **Việc ghi bản ghi outbox nằm trong request của C1 (D14), việc phát đi nằm ở đây** | Tự phát triển (có thể dựa trên change events của catalog nếu đủ tin cậy) | POC-11 |

@@ -365,6 +365,7 @@ classDiagram
     class MetadataCatalogPort {
         <<abstract>>
         +ensureCollection(Collection) EntityRef
+        +findCollection(string) Collection
         +registerDocument(Document) EntityRef
         +registerVersion(DocumentVersion, Metadata) EntityRef
         +patchControlledFields(DocumentId, DocumentVersionId, Map) void
@@ -376,7 +377,7 @@ classDiagram
     class RelationshipStorePort {
         <<abstract>>
         +upsert(Relationship) void
-        +query(DocumentVersionId, Direction, RelationType) List~Relationship~
+        +query(DocumentVersionId, Direction, RelationType, PageRequest) List~RelatedEdge~
         +remove(Relationship) void
     }
     class ObjectStorePort {
@@ -390,17 +391,18 @@ classDiagram
     }
     class IntentStorePort {
         <<abstract>>
-        +create(UploadIntent) void
+        +create(ProcessingIntent) void
         +advance(RequestId, IntentState) void
-        +save(UploadIntent) void
-        +findByIdempotencyKey(IdempotencyKey) UploadIntent
-        +findByRequestId(RequestId) UploadIntent
-        +findUnfinished(Duration) List~UploadIntent~
+        +save(ProcessingIntent) void
+        +findByIdempotencyKey(IdempotencyKey) ProcessingIntent
+        +findByRequestId(RequestId) ProcessingIntent
+        +findUnfinished(Duration, IntentKind) List~ProcessingIntent~
     }
     class PolicyDecisionPort {
         <<abstract>>
         +decide(Principal, Action, ResourceRef) Decision
         +effectivePolicy(DocumentId) AccessPolicy
+        +invalidate(DocumentId) void
     }
     class DocumentLockPort {
         <<abstract>>
@@ -413,7 +415,7 @@ classDiagram
     class AuditPort {
         <<abstract>>
         +record(AuditEvent) void
-        +listForDocument(DocumentId) List~AuditEvent~
+        +listForDocument(DocumentId, PageRequest) Page~AuditEvent~
     }
 
     Document "1" *-- "1..*" DocumentVersion
@@ -587,13 +589,13 @@ Bảng dưới là **hợp đồng cần đối chiếu với OpenAPI của phi�
 | Lịch sử metadata | Entity version của OpenMetadata | `GET /api/v1/drives/files/{id}/versions` | `OpenMetadataCatalogAdapter` |
 | Service account của Document Service | Bot user + JWT | cấu hình, không gọi lúc chạy | `OmAuthProvider` |
 | File gốc | **Không** nằm trong OpenMetadata | S3 API | `S3ObjectStoreAdapter` |
-| UploadIntent, Audit của Document Service | **Không** nằm trong OpenMetadata | C7 + log | `IntentStorePort`, `AuditPort` |
+| ProcessingIntent, Audit của Document Service | **Không** nằm trong OpenMetadata | C7 + log | `IntentStorePort`, `AuditPort` |
 
 Ba điểm khác biệt so với mô hình trung tính trước đây, phải phản ánh đúng trong code:
 
 1. **`version` của File entity là lịch sử metadata, không phải phiên bản nội dung.** `OmEntityVersionGuard` chỉ dùng trường này để phát hiện ghi đè đồng thời, **không** dùng làm `version_label`.
 2. **OpenMetadata không có If-Match/ETag.** Mọi thao tác cần tuần tự hóa phải nằm trong `DocumentLockPort.withLock(documentId, ...)`; `OmEntityVersionGuard` chỉ là lớp phát hiện xung đột thứ hai, không thay khóa. Giới hạn của lớp này phải được nói rõ: so sánh `version` trước và sau một lệnh `PATCH` chỉ phát hiện được trường hợp số version **tụt**; hai lệnh `PATCH` đồng thời đều làm version **tăng**, nên không phát hiện được bằng cách so sánh này. Tuần tự hoá thật sự là việc của `DocumentLockPort`, và POC-22 phải được tính là đạt nhờ khóa, không nhờ guard.
-3. **Lọc quyền kết quả tra cứu là quy tắc nghiệp vụ, không phải chi tiết adapter.** Nó nằm ở `SearchPage.filtered(principal, action)` trong `domain`, nên mọi adapter catalog đều chịu cùng một quy tắc và test được không cần dựng catalog. Bản vẽ trước ngày 19/11/2026 đặt việc này ở một lớp `OmPermissionResultFilter` trong adapter OpenMetadata — sai lớp, vì đổi sản phẩm catalog sẽ làm mất quy tắc phân quyền.
+3. **Lọc quyền kết quả tra cứu là quy tắc nghiệp vụ, không phải chi tiết adapter.** Nó nằm ở `SearchPage.filtered(principal, action)` trong `domain`, nên mọi adapter catalog đều chịu cùng một quy tắc và test được không cần dựng catalog. Bản vẽ trước ngày 19/11/2026 đặt việc này ở một lớp `OmPermissionResultFilter` trong adapter OpenMetadata — sai lớp. B19/11 đã chuyển quy tắc từ adapter (`OmPermissionResultFilter`) sang domain (`SearchPage.filtered`), vì đổi sản phẩm catalog không được làm mất quy tắc phân quyền.
 4. **Custom property chỉ có nghĩa khi đã đăng ký trước.** `OmSchemaMigration.runOnStartup()` phải chạy `OmCustomPropertyRegistrar.ensureProperties(...)` và `assertFilterable(...)` cho `document_type`, `status`, `classification`, `collection_id`, `version_label`; service **fail fast** nếu thiếu, không âm thầm ghi `extension` không lọc được.
 
 ## 6. Luồng gọi ở mức lớp — tạo phiên bản mới trên OpenMetadata
@@ -612,7 +614,7 @@ sequenceDiagram
     participant OM as OpenMetadata REST API
     participant EV as EventPublisherPort
 
-    CT->>GU: runOnce(idempotencyKey, cmd)
+    CT->>GU: inspect(idempotencyKey)
     GU->>IN: findByIdempotencyKey(key)
     alt Đã có intent Completed
         IN-->>GU: intent Completed
@@ -628,7 +630,7 @@ sequenceDiagram
         VP-->>UC: ok hoặc DuplicateContentException (I8)
         UC->>VP: nextVersion(document, uploadRequest)
         VP-->>UC: DocumentVersion Draft + DocumentVersionId (I1, I2)
-        UC->>IN: create(UploadIntent Received)
+        UC->>IN: create(ProcessingIntent Received)
         UC->>OS: putImmutable(storageUri, stream, checksum)
         OS-->>UC: PutResult + checksum thực tế đọc lại từ storage
         UC->>UC: đối chiếu checksum thực tế với expectedChecksum, lệch thì RetryPending (I10)
@@ -645,7 +647,7 @@ sequenceDiagram
     end
 ```
 
-Khi bất kỳ bước nào từ `create(UploadIntent)` trở đi thất bại, `IntentRecoveryJob.runOnce()` gọi `UploadSaga.resume(intent)` với **cùng** `DocumentVersionId` và `IdempotencyKey`; `PUT /api/v1/drives/files` theo FQN cố định là thao tác idempotent nên retry không sinh entity trùng — xem [luồng 7 ở c4-05](c4-05-dynamic-views.md#7-phục-hồi-sau-lỗi-một-phía).
+Khi bất kỳ bước nào từ `create(ProcessingIntent)` trở đi thất bại, `IntentRecoveryJob.runOnce()` gọi `UploadSaga.resume(intent)` với **cùng** `DocumentVersionId` và `IdempotencyKey`; `PUT /api/v1/drives/files` theo FQN cố định là thao tác idempotent nên retry không sinh entity trùng — xem [luồng 7 ở c4-05](c4-05-dynamic-views.md#7-phục-hồi-sau-lỗi-một-phía).
 
 ## 7. Luồng gọi ở mức lớp — duyệt phiên bản
 
@@ -1107,7 +1109,6 @@ Giá trị dưới đây là **giá trị khởi điểm đề xuất**, nằm t
 | Object Storage — ghi object | 2s | theo kích thước file | theo kích thước file | 3 ở mức **từng part** | 200ms base, cap 5s | không mở breaker cho upload đang chạy | dùng multipart để retry theo part, không gửi lại toàn file |
 | Intent Store — registry DB | 500ms | 1s | 2s | 3 | 50ms base, cap 500ms | 50% trong 20 | thất bại thì từ chối ghi, không bỏ qua intent |
 | Intent Store — manifest S3 | 1s | 2s | 4s | 3 | 100ms base, cap 1s | như trên | Q2 còn mở |
-| IdP — JWKS | 1s | 2s | 3s | 2 | 200ms base | không mở | JWKS cache có TTL và dùng được bản cũ trong hạn |
 | Khóa phân tán | 300ms | 1s | **không retry quá hạn khóa** | 1 | — | — | hết hạn thì trả `409`, không giữ khóa để retry |
 | Outbox store (C7) | 500ms | 1s | 2s | 3 | 50ms base, cap 500ms | 50% trong 20 | executor **riêng**, không dùng chung với webhook downstream |
 | Webhook downstream | 1s | 3s | 5s | 3 | 200ms base, cap 2s | 50% trong 20 | breaker mở chỉ dừng việc phát sự kiện, không ảnh hưởng readiness của API |
@@ -1207,19 +1208,20 @@ Ranh giới cố định: **retry trong request tính bằng giây**, chỉ đ�
 | D1 | `POST /api/v1/documents` | `routes.register_document` | I11, I18 |
 | D1 | `GET /api/v1/documents/{documentId}` | `routes.read_document` | I11 |
 | D1 | `POST /api/v1/documents/{documentId}/versions` | `routes.create_version` | I1, I2, I3, I8, I9, I10, I13, I18 |
-| D1 | `POST /api/v1/versions/{versionId}/status?document_id=` | `routes.transition_status` | I4, I5, I12, I14 |
+| D1 | `GET /api/v1/documents/{documentId}/versions` **(B14)** — trả `Page[VersionResponse]` | `routes.list_versions` | — |
+| D1 | `POST /api/v1/versions/{versionId}/status?document_id=` — `Idempotency-Key` bắt buộc **(B8: `WriteCtx`)** | `routes.transition_status` | I4, I5, I12, I13, I14 |
 | D1 | `POST /api/v1/relationships` | `routes.declare_relationship` | I6 |
-| D1 | `GET /api/v1/versions/{versionId}/relationships?direction=both&relation_type=` | `routes.query_relationships` | I7, I16 |
+| D1 | `GET /api/v1/versions/{versionId}/relationships?direction=both&relation_type=` **(B14: phân trang cursor)** — trả `list[RelatedEdge]` kèm `direction` | `routes.query_relationships` | I7, I16 |
 | D1 | `GET /api/v1/versions/{versionId}/download` | `routes.download` | I11, POC-23 |
-| D1 | `GET /api/v1/search` | `routes.search` | POC-02, 17, 19 |
+| D1 | `GET /api/v1/search?...&owner=&version_label=&page_size=&cursor=` **(B13: `owner`/`version_label`; B14: `page_size`/`cursor`)** | `routes.search` | POC-02, 17, 19 |
 | D1 | `PATCH /api/v1/documents/{documentId}/access-policy` | `routes.update_access_policy` | I11, I12 |
-| D1 | `GET /api/v1/documents/{documentId}/audit` | `routes.list_audit` | I12 |
+| D1 | `GET /api/v1/documents/{documentId}/audit` **(B14: phân trang cursor)** — trả `Page[AuditEvent]` | `routes.list_audit` | I12 |
 | D24 | `POST /api/v1/collections`, `GET /api/v1/collections`, `PATCH /api/v1/collections/{collectionId}` | `routes.collections` | — |
 | D24 | `PATCH /api/v1/documents/{documentId}/collection` | `routes.move_document` | I1 (đổi collection không đổi ID và object key) |
 | D25 | `DELETE /api/v1/documents/{documentId}`, `DELETE /api/v1/versions/{versionId}` | `routes.delete` | I17, POC-11, 15 |
 | D25 | `PATCH /api/v1/documents/{documentId}/retention` | `routes.update_retention` | I17 |
 | D23 | `PUT /api/v1/admin/document-type-schemas/{documentType}`, `GET /api/v1/admin/document-type-schemas` | `routes.schemas` | I18 |
-| C8 | CLI `python -m document_service.worker.reconcile`; endpoint HTTP `POST /internal/reconcile/run` là **tùy chọn** | `worker.reconcile.ReconcileRunner` | I13 |
+| C8 | CLI `python -m document_service.worker.reconcile` — không có endpoint HTTP tương ứng; `ReconcileRunner` chỉ chạy qua tiến trình `worker.reconcile` | `worker.reconcile.ReconcileRunner` | I13 |
 
 Endpoint vận hành (`/livez`, `/startupz`, `/readyz`, `/internal/healthz/deps`) nằm ở [mục 10.4](#104-endpoint-và-chế-độ-suy-giảm), tách khỏi `/api/v1` và không nằm trong hợp đồng công khai cho ứng dụng khai thác.
 

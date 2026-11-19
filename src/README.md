@@ -21,7 +21,7 @@ make docs-check  # parse mọi sơ đồ mermaid trong docs/
 
 ## Ánh xạ module ↔ thành phần thiết kế
 
-Thành phần D1–D18 theo [c4-03](../docs/c4-03-component-document-service.md) mục 3.2 và [c4-04b](../docs/c4-04b-code-structure.md) mục 4.
+Thành phần D1–D27 theo [c4-03](../docs/c4-03-component-document-service.md) mục 3.2 và [c4-04b](../docs/c4-04b-code-structure.md) mục 4.
 
 | ID | Thành phần | File hiện thực |
 |---|---|---|
@@ -43,6 +43,15 @@ Thành phần D1–D18 theo [c4-03](../docs/c4-03-component-document-service.md)
 | D16 | Audit Logger | `adapter/outbound/observability/audit_log.py` (`StructuredAuditLogger`) + `application/usecase/audit.py` (`ListAuditUseCase`) |
 | D17 | Sync Orchestrator | `adapter/inbound/sync/source_sync.py` (`SourceSyncJob`, `FileSystemSourceConnector`, `SourcePermissionMapper`, `SourceSyncScheduler`) |
 | D18 | Search Query Service | `application/usecase/search_documents.py` (`SearchDocumentsUseCase`) + `adapter/outbound/openmetadata/search.py` |
+| D19 | Relationship Store Adapter | `adapter/outbound/relationship/sqlite_registry.py` (`SqliteRelationshipRegistry`) + `adapter/outbound/openmetadata/lineage.py` (`OmLineageRelationshipStore`) |
+| D20 | State Store Adapter | `adapter/outbound/sqlite_support.py` + `adapter/outbound/intent/` + `adapter/outbound/observability/` |
+| D21 | Policy Decision Adapter | `adapter/outbound/policy/policy_decision.py` (`CachingPolicyDecision`) |
+| D22 | Document Lock Adapter | `adapter/outbound/fake/in_memory.py` (`InMemoryDocumentLock`) + `adapter/outbound/lock/redis_lock.py` (`RedisDocumentLock`) + `application/orchestration/lock_manager.py` |
+| D23 | Metadata Schema & Validation | Ngoài phạm vi; chỗ cắm ở `domain/metadata_fields.py` |
+| D24 | Collection Manager | Ngoài phạm vi; chỗ cắm ở `MetadataCatalogPort.ensure_collection`/`find_collection` |
+| D25 | Retention & Deletion | Ngoài phạm vi; chỗ cắm ở `Document.retention_policy` |
+| D26 | Outbox Dispatcher | `adapter/outbound/observability/outbox_dispatcher.py` + `worker/dispatch.py` (`OutboxDispatchRunner`) |
+| D27 | Hạ tầng xuyên suốt | `infrastructure/container.py`, `infrastructure/health.py`, `infrastructure/resilience/`, `adapter/inbound/health/` |
 
 Bảng đầy đủ D1–D27, kèm cột lớp và cột bất biến, nằm ở [docs/c4-09-lld.md](../docs/c4-09-lld.md) mục 2.2; bảng trên đây chỉ là bản rút gọn.
 

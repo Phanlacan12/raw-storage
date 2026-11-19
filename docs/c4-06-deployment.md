@@ -32,7 +32,7 @@ flowchart TB
             N5[("objectstore<br/>[C6 · SeaweedFS 3.68]<br/>:8333 S3 · :9333")]
         end
 
-        N6[("local_data/document_service.sqlite<br/>[C7 · Service State Store]<br/>upload_intent · relationship<br/>audit_event · outbox_event")]
+        N6[("local_data/document_service.sqlite<br/>[C7 · Service State Store]<br/>processing_intent · relationship<br/>audit_event · outbox_event")]
         N8["mock-downstream<br/>[Giả lập KB nhận sự kiện]<br/>Chưa dựng — cần cho POC-11"]
     end
 

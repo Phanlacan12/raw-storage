@@ -4,15 +4,16 @@ Nhóm `TestDependencyRules` giữ nguyên bốn luật phụ thuộc đã AST t�
 Nhóm `TestWritePathRules` được viết lại ở B20 theo
 `docs/c4-09-lld.md` mục 15.5 — tự phát hiện `WriteUseCase`, kiểm bằng
 tập đường dẫn chấm trên `ast.Call`, so thứ tự bằng `lineno`.
-Luật thứ bảy ở mục 15.6 (`test_doc_class_names_exist_in_source`) chạy
-chế độ warn cho tới khi B21 đồng bộ `c4-04b`/`c4-09`.
+Luật thứ bảy ở mục 15.6 (`test_doc_class_names_exist_in_source`) chuyển
+sang strict assert ở B21 — mọi tên PascalCase trong backtick ở
+`c4-04b`/`c4-09` phải hoặc có `ClassDef` tương ứng trong `src/`, hoặc
+nằm trong `ALLOWLIST_EXTERNAL`.
 """
 
 from __future__ import annotations
 
 import ast
 import re
-import warnings
 from importlib.util import resolve_name
 from pathlib import Path
 
@@ -74,7 +75,6 @@ ALLOWLIST_EXTERNAL = {
     "FixedClock",
     "ThreadOffloader",
     "ConcurrencyLimiter",
-    "Checksum",
     "Path",
     "Session",
     "ConfigDict",
@@ -404,8 +404,10 @@ class TestWritePathRules:
     def test_doc_class_names_exist_in_source(self) -> None:
         """Mọi tên PascalCase trong backtick ở `c4-04b`/`c4-09` phải tồn tại trong `src/`.
 
-        Chế độ warn tạm thời cho tới khi B21 đồng bộ hai tài liệu — hiện chỉ in
-        cảnh báo để không block B20. Sau B21 chuyển sang `assert` (gate GT/G2).
+        B21 chuyển luật 7 sang strict assert (c4-09 mục 15.6): mọi tên PascalCase
+        trong backtick phải hoặc có `ClassDef` trong `src/`, hoặc nằm trong
+        `ALLOWLIST_EXTERNAL`. Thêm tên lớp mới vào docs mà không có code tương
+        ứng sẽ làm test đỏ.
         """
         source_classes = _collect_source_class_names()
         missing: dict[str, set[str]] = {}
@@ -417,13 +419,12 @@ class TestWritePathRules:
             miss = names - source_classes - ALLOWLIST_EXTERNAL
             if miss:
                 missing[doc] = miss
-        if missing:
-            summary = "; ".join(f"{doc}: {sorted(names)}" for doc, names in sorted(missing.items()))
-            warnings.warn(
-                f"[B20 warn] Tên lớp trong docs không có trong src/: {summary}. "
-                "B21 phải đồng bộ hoặc mở rộng ALLOWLIST_EXTERNAL.",
-                stacklevel=1,
-            )
+        assert not missing, (
+            "Tên lớp trong docs không có trong src/: "
+            + "; ".join(f"{doc}: {sorted(names)}" for doc, names in sorted(missing.items()))
+            + ". Thêm `ClassDef` tương ứng vào `src/`, hoặc mở rộng ALLOWLIST_EXTERNAL "
+            "nếu đó là tên sản phẩm ngoài."
+        )
 
 
 def _collect_source_class_names() -> set[str]:

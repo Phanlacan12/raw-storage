@@ -60,15 +60,23 @@ classDiagram
         +string created_by
     }
 
-    class UploadIntent {
+    class ProcessingIntent {
         +string request_id
         +string idempotency_key
+        +IntentKind kind
         +string document_id
         +string document_version_id
         +string expected_checksum
         +string state
         +int retry_count
         +datetime updated_at
+    }
+
+    class IntentKind {
+        <<enumeration>>
+        upload
+        status_change
+        command
     }
 
     class MetadataSource {
@@ -121,7 +129,8 @@ classDiagram
     DocumentVersion "1" --> "0..*" Relationship : là nguồn
     DocumentVersion "1" --> "0..*" Relationship : là đích
     Document "1" --> "0..1" AccessPolicy : áp dụng
-    DocumentVersion "1" --> "0..1" UploadIntent : được tạo bởi
+    DocumentVersion "1" --> "0..1" ProcessingIntent : được tạo bởi
+    ProcessingIntent --> IntentKind
     Document "1" --> "0..*" MetadataChange : lịch sử metadata
     DocumentVersion "1" --> "0..*" MetadataChange : lịch sử metadata
     DocumentTypeSchema "1" --> "0..*" Document : ràng buộc metadata
@@ -155,7 +164,7 @@ classDiagram
 | I13 | Retry với cùng `idempotency_key` không sinh thêm `DocumentVersion` | D11 | POC-18, 21 |
 | I14 | `latest` theo thứ tự phiên bản **khác** `current approved`; chỉ D7 được cập nhật trường bản hiện hành | D7 | POC-07, 10 |
 | I15 | Mọi giá trị metadata bắt buộc đều ghi được `MetadataSource`; metadata tự động trích xuất **chỉ** từ thuộc tính kỹ thuật của file, không đọc nội dung | D4, D23 | POC-01, 24 |
-| I16 | Truy vấn quan hệ hai chiều phải trả kèm `direction`; **không** được đảo `source_version_id`/`target_version_id` để biểu diễn chiều vào, vì như vậy là phát biểu sai một cạnh | D8 | POC-06 |
+| I16 | Truy vấn quan hệ hai chiều phải trả kèm `direction`; **không** được đảo `source_version_id`/`target_version_id` để biểu diễn chiều vào, vì như vậy là phát biểu sai một cạnh. Đã có test — xem B4. | D8 | POC-06 |
 | I17 | Xóa tài liệu hoặc hết retention **không** xóa `AuditEvent` và lịch sử trạng thái; chỉ object và metadata khai thác bị thu hồi | D25, D16 | POC-11, 15, 25 |
 | I18 | Tạo phiên bản bị từ chối nếu thiếu trường trong `DocumentTypeSchema.required_fields` của `document_type` tương ứng | D23 | POC-24 |
 
@@ -214,7 +223,7 @@ Bảng sau là **ứng viên ánh xạ**, không phải khẳng định sản ph
 | `references`, `supersedes` | Entity reference / custom properties hoặc registry relation | Related Documents / structured properties hoặc registry relation |
 | `current_version_id` | Thuộc tính có kiểm soát trên Document/Directory | Thuộc tính có kiểm soát; **không đồng nhất với `latest` của VersionSet** |
 | File gốc | S3 object nằm ngoài catalog | S3 object nằm ngoài catalog; `DataHubFile` là file đính kèm, không thay kho này |
-| UploadIntent, AuditEvent, MetadataChange, outbox của Document Service | Nằm ngoài catalog, trong **C7 Service State Store**; audit đồng thời đẩy sang log tập trung. Chỉ log stream là **không đủ**: POC-14 cần truy vấn audit theo `document_id` | Tương tự: C7 + log |
+| ProcessingIntent, AuditEvent, MetadataChange, outbox của Document Service | Nằm ngoài catalog, trong **C7 Service State Store**; audit đồng thời đẩy sang log tập trung. Chỉ log stream là **không đủ**: POC-14 cần truy vấn audit theo `document_id` | Tương tự: C7 + log |
 | DocumentTypeSchema | Nguồn sự thật ở C7/cấu hình của D23; phần ánh xạ sang catalog là `OmCustomPropertyRegistrar.ensureProperties(...)` | Structured property definitions |
 
 ## 4.6. Quy ước object key
