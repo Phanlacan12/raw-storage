@@ -162,6 +162,7 @@ async def main() -> None:  # noqa: C901 - kịch bản tuyến tính, tách nh�
             TransitionStatusCommand(
                 document_id=document.document_id,
                 version_id=result.version.version_id,
+                idempotency_key=IdempotencyKey(f"status-{result.version.version_id}"),
                 target_status=DocumentStatus.APPROVED,
                 principal=principal,
             )
@@ -218,24 +219,21 @@ async def main() -> None:  # noqa: C901 - kịch bản tuyến tính, tách nh�
     heading("5. Trace from SRS v2.0 and back from URD v1.2")
     outgoing = await edges(srs_v20, Direction.OUTGOING)
     for item in outgoing:
-        line(str(item.relation_type), f"-> {item.target_version_id}")
+        line(str(item.relationship.relation_type), f"-> {item.relationship.target_version_id}")
     check(
         "SRS v2.0 derived_from URD v1.2",
         any(
-            item.relation_type is RelationType.DERIVED_FROM
-            and item.target_version_id == urd_v12.version_id
+            item.relationship.relation_type is RelationType.DERIVED_FROM
+            and item.relationship.target_version_id == urd_v12.version_id
             for item in outgoing
         ),
     )
     incoming = await edges(urd_v12, Direction.INCOMING)
-    # Với chiều INCOMING, registry gọi `reversed_direction()` nên phiên bản đang hỏi
-    # luôn nằm ở `source_version_id`, còn đầu kia nằm ở `target_version_id`. Đây là
-    # góc nhìn "hàng xóm", không phải chiều thật của cạnh.
     for item in incoming:
-        line(str(item.relation_type), f"<- {item.target_version_id}")
+        line(str(item.relationship.relation_type), f"<- {item.relationship.source_version_id}")
     check(
         "URD v1.2 is derived by SRS v2.0",
-        any(item.target_version_id == srs_v20.version_id for item in incoming),
+        any(item.relationship.source_version_id == srs_v20.version_id for item in incoming),
     )
 
     # === BƯỚC 6 ======================================================================
@@ -244,7 +242,7 @@ async def main() -> None:  # noqa: C901 - kịch bản tuyến tính, tách nh�
     after = await edges(srs_v20, Direction.OUTGOING)
     check(
         "v2.0 relationship target unchanged",
-        [item.target_version_id for item in after] == [urd_v12.version_id],
+        [item.relationship.target_version_id for item in after] == [urd_v12.version_id],
     )
     check("v2.1 has no relationship yet", await edges(srs_v21, Direction.OUTGOING) == [])
 

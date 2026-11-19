@@ -18,10 +18,10 @@ from document_service.adapter.inbound.sync.source_sync import (
     SourceSyncScheduler,
 )
 from document_service.application.context import PolicySet, PortBundle
-from document_service.application.metadata_builder import CatalogMetadataBuilder
 from document_service.application.usecase.create_version import CreateVersionUseCase
 from document_service.application.usecase.register_document import RegisterDocumentUseCase
 from document_service.config import SourceSettings, SyncSettings
+from document_service.domain.metadata_builder import CatalogMetadataBuilder
 from document_service.domain.value import DocumentId
 
 

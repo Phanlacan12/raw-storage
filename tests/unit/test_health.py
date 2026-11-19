@@ -6,6 +6,8 @@ Khẳng định quan trọng nhất: `/livez` **không** đổi khi phụ thuộ
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 
 from document_service.adapter.inbound.health.indicators import (
@@ -23,8 +25,10 @@ from document_service.adapter.outbound.fake.in_memory import (
     InMemoryIntentStore,
     InMemoryObjectStore,
 )
+from document_service.adapter.outbound.openmetadata.entity import OmEntityVersionGuard
 from document_service.domain.errors import ServiceDegradedError
 from document_service.domain.value import Action
+from document_service.infrastructure.container import ServiceContainer
 from document_service.infrastructure.health import (
     DependencyKind,
     HealthResult,
@@ -100,7 +104,10 @@ class TestReadinessPolicy:
             _result("object_store", DependencyKind.REQUIRED_FOR_DOWNLOAD, HealthStatus.UP),
             _result("intent_store", DependencyKind.REQUIRED_FOR_WRITE, HealthStatus.DOWN),
         )
-        assert ReadinessPolicy().evaluate(results) is ServiceMode.DOWNLOAD_ONLY
+        assert ReadinessPolicy().evaluate(results) is ServiceMode.NOT_READY
+        assert (
+            ReadinessPolicy().evaluate(results, cached_download=True) is ServiceMode.DOWNLOAD_ONLY
+        )
 
     def test_not_ready_when_storage_down(self) -> None:
         """Storage DOWN thì không phục vụ được gì."""
@@ -150,7 +157,7 @@ class TestRegistryAndGate:
 
     async def test_backlog_indicator_reports_degraded(self) -> None:
         """Hàng đợi đối soát vượt ngưỡng thì báo DEGRADED."""
-        from document_service.domain.model import UploadIntent
+        from document_service.domain.model import ProcessingIntent
         from document_service.domain.value import (
             Checksum,
             DocumentId,
@@ -162,7 +169,7 @@ class TestRegistryAndGate:
         intents = InMemoryIntentStore()
         for index in range(3):
             await intents.create(
-                UploadIntent(
+                ProcessingIntent(
                     request_id=RequestId(f"REQ-{index}"),
                     idempotency_key=IdempotencyKey(f"idem-key-{index}"),
                     document_id=DocumentId("DOC-1"),
@@ -175,10 +182,12 @@ class TestRegistryAndGate:
         assert result.status is HealthStatus.DEGRADED
         assert "backlog=3" in result.detail
 
-    def test_idp_indicator_degrades_on_stale_jwks(self) -> None:
-        """JWKS không tải lại được thì DEGRADED, không DOWN."""
-        indicator = IdpHealthIndicator(jwks_available=False)
-        assert indicator.kind is DependencyKind.REQUIRED_FOR_READ
+    async def test_idp_indicator_reads_live_verifier(self) -> None:
+        """Thay đổi ở verifier được phản ánh trên probe kế tiếp."""
+        verifier = AsyncMock(side_effect=[True, False])
+        indicator = IdpHealthIndicator(verifier)
+        assert (await indicator.check()).status is HealthStatus.UP
+        assert (await indicator.check()).status is HealthStatus.DOWN
 
     def test_gate_blocks_write_in_read_only(self) -> None:
         """Chế độ READ_ONLY chặn hành động ghi, vẫn cho tải."""
@@ -195,3 +204,38 @@ class TestRegistryAndGate:
         for action in (Action.WRITE, Action.DOWNLOAD, Action.SEARCH):
             with pytest.raises(ServiceDegradedError):
                 gate.assert_allowed(action)
+
+
+async def test_health_probe_names_groups_and_storage_failure() -> None:
+    """Tám port có danh tính riêng, S3 down chỉ ngừng cấp file và ghi."""
+    container = ServiceContainer()
+    container.health.mark_startup_done()
+    assert isinstance(container.ports.objects, InMemoryObjectStore)
+    container.ports.objects.available = False
+    report = await container.health.details()
+    results = {r.name: r for r in report.results}
+    assert len(results) == len(report.results)
+    assert {"audit", "outbox", "policies", "intent_store"} <= results.keys()
+    assert DependencyKind.REQUIRED_FOR_WRITE in results["object_store"].kinds
+    assert DependencyKind.REQUIRED_FOR_WRITE in results["catalog"].kinds
+    assert report.mode is ServiceMode.READ_ONLY
+    container.gate.update(report.mode, report.download_ready)
+    with pytest.raises(ServiceDegradedError):
+        container.gate.assert_allowed(Action.DOWNLOAD)
+    container.gate.assert_allowed(Action.SEARCH)
+
+
+def test_missing_write_group_cannot_elect_full_mode() -> None:
+    """Một nhóm bắt buộc rỗng không bỏ phiếu UP."""
+    assert ReadinessPolicy().evaluate(()) is ServiceMode.NOT_READY
+    results = (
+        _result("read", DependencyKind.REQUIRED_FOR_READ, HealthStatus.UP),
+        _result("download", DependencyKind.REQUIRED_FOR_DOWNLOAD, HealthStatus.UP),
+    )
+    assert ReadinessPolicy().evaluate(results) is ServiceMode.READ_ONLY
+
+
+@pytest.mark.parametrize(("observation", "changed"), [(0.9, True), (1.0, False), (1.1, True)])
+def test_guard_compares_both_directions(observation: float, changed: bool) -> None:
+    """Version guard dùng cho quan sát, bao gồm cả version tăng lẫn giảm."""
+    assert OmEntityVersionGuard().changed_unexpectedly(1.0, {"version": observation}) is changed

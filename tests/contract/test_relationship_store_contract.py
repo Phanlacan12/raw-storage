@@ -6,6 +6,7 @@ không làm đổi đích của quan hệ cũ — nội dung của test case POC
 
 from __future__ import annotations
 
+from document_service.domain.dto import PageRequest
 from document_service.domain.model import Relationship
 from document_service.domain.port import RelationshipStorePort
 from document_service.domain.value import Direction, DocumentVersionId, RelationType
@@ -37,17 +38,20 @@ class TestRelationshipStoreContract:
         await relationship_store.upsert(_relationship(RelationType.DERIVED_FROM, SRS_V20, URD_V12))
         items = await relationship_store.query(SRS_V20, Direction.OUTGOING)
         assert len(items) == 1
-        assert items[0].target_version_id == URD_V12
+        assert items[0].direction is Direction.OUTGOING
+        assert items[0].relationship.target_version_id == URD_V12
 
-    async def test_incoming_query_reverses_edge(
+    async def test_incoming_query_keeps_declared_endpoints(
         self, relationship_store: RelationshipStorePort
     ) -> None:
         """Truy vấn ngược trả về đúng loại quan hệ và đúng phiên bản đối diện."""
-        await relationship_store.upsert(_relationship(RelationType.DERIVED_FROM, SRS_V20, URD_V12))
-        items = await relationship_store.query(URD_V12, Direction.INCOMING)
+        await relationship_store.upsert(_relationship(RelationType.REFERENCES, SAD_V11, SRS_V20))
+        items = await relationship_store.query(SRS_V20, Direction.INCOMING)
         assert len(items) == 1
-        assert items[0].relation_type is RelationType.DERIVED_FROM
-        assert items[0].target_version_id == SRS_V20
+        assert items[0].direction is Direction.INCOMING
+        assert items[0].relationship.relation_type is RelationType.REFERENCES
+        assert items[0].relationship.source_version_id == SAD_V11
+        assert items[0].relationship.target_version_id == SRS_V20
 
     async def test_filter_by_relation_type(self, relationship_store: RelationshipStorePort) -> None:
         """Lọc theo loại quan hệ không trả lẫn loại khác."""
@@ -55,7 +59,7 @@ class TestRelationshipStoreContract:
         await relationship_store.upsert(_relationship(RelationType.REFERENCES, SAD_V11, SRS_V20))
         derived = await relationship_store.query(SRS_V20, Direction.BOTH, RelationType.DERIVED_FROM)
         assert len(derived) == 1
-        assert derived[0].relation_type is RelationType.DERIVED_FROM
+        assert derived[0].relationship.relation_type is RelationType.DERIVED_FROM
 
     async def test_upsert_is_idempotent(self, relationship_store: RelationshipStorePort) -> None:
         """Ghi lại cùng một cạnh không tạo bản trùng."""
@@ -73,7 +77,7 @@ class TestRelationshipStoreContract:
         await relationship_store.upsert(_relationship(RelationType.REFERENCES, SAD_V11, SRS_V20))
         items = await relationship_store.query(SRS_V20, Direction.BOTH)
         assert len(items) == 2
-        assert {item.relation_type for item in items} == {
+        assert {item.relationship.relation_type for item in items} == {
             RelationType.DERIVED_FROM,
             RelationType.REFERENCES,
         }
@@ -96,4 +100,21 @@ class TestRelationshipStoreContract:
             SRS_V20, Direction.OUTGOING, RelationType.DERIVED_FROM
         )
         assert len(old_edges) == 1
-        assert old_edges[0].target_version_id == URD_V12
+        assert old_edges[0].relationship.target_version_id == URD_V12
+
+
+async def test_pages_span_both_directions(relationship_store: RelationshipStorePort) -> None:
+    """Ba trang theo thứ tự ổn định, không mất hoặc lặp cạnh."""
+    for other in (URD_V12, SAD_V11, DocumentVersionId("VER-SRS-0021")):
+        await relationship_store.upsert(_relationship(RelationType.REFERENCES, other, SRS_V20))
+    seen = []
+    cursor = None
+    for _ in range(3):
+        page = await relationship_store.query_page(
+            SRS_V20, Direction.BOTH, None, PageRequest(1, cursor)
+        )
+        assert len(page.items) == 1
+        seen.append(page.items[0].relationship.source_version_id)
+        cursor = page.next_cursor
+    assert len(set(seen)) == 3
+    assert cursor is None

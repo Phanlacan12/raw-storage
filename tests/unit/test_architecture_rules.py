@@ -10,6 +10,7 @@ Hai kiểm tra bắt buộc ở mục 15 của docs/c4-04b-code-structure.md:
 from __future__ import annotations
 
 import ast
+from importlib.util import resolve_name
 from pathlib import Path
 
 import pytest
@@ -29,6 +30,34 @@ def _imports(path: Path) -> set[str]:
         elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
             names.add(node.module.split(".")[0])
     return names
+
+
+def _imported_modules(path: Path) -> set[str]:
+    """Đường dẫn module **đầy đủ** của mọi import trong một file.
+
+    Khác `_imports`: giữ nguyên `document_service.application.metadata_builder` thay vì
+    cắt về `document_service`, nên kiểm được phụ thuộc tới một package con cụ thể.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            package = ".".join(path.parent.relative_to(SRC.parent).parts)
+            module = resolve_name("." * node.level + (node.module or ""), package)
+            modules.add(module)
+            modules.update(f"{module}.{alias.name}" for alias in node.names)
+    return modules
+
+
+def _depends_on(path: Path, package: str) -> set[str]:
+    """Các module được import thuộc `package` (chính nó hoặc package con)."""
+    return {
+        module
+        for module in _imported_modules(path)
+        if module == package or module.startswith(f"{package}.")
+    }
 
 
 def _python_files(package: str) -> list[Path]:
@@ -56,13 +85,26 @@ class TestDependencyRules:
     @pytest.mark.parametrize("path", _python_files("application"), ids=lambda item: item.name)
     def test_application_does_not_import_adapters(self, path: Path) -> None:
         """Lớp application chỉ biết port, không biết adapter cụ thể."""
-        source = path.read_text(encoding="utf-8")
-        assert "document_service.adapter" not in source
+        leaked = _depends_on(path, "document_service.adapter")
+        assert not leaked, f"{path.name} import {leaked}"
 
-    def test_domain_does_not_import_config(self) -> None:
+    @pytest.mark.parametrize("path", _python_files("adapter"), ids=lambda item: item.name)
+    def test_adapter_does_not_import_application(self, path: Path) -> None:
+        """Adapter không phụ thuộc ngược lên application (luật 4 của c4-09 mục 2.3).
+
+        Sơ đồ hướng phụ thuộc có đúng một cạnh `adapter.inbound → application`: inbound
+        dựng command và gọi use case. Mọi file adapter khác — toàn bộ `adapter.outbound`,
+        nơi X24 từng vi phạm — không được biết tới tầng application.
+        """
+        leaked = _depends_on(path, "document_service.application")
+        driving_side = path.is_relative_to(SRC / "adapter" / "inbound")
+        assert driving_side or not leaked, f"{path.name} import {leaked}"
+
+    @pytest.mark.parametrize("path", _python_files("domain"), ids=lambda item: item.name)
+    def test_domain_does_not_import_config(self, path: Path) -> None:
         """Lõi miền không phụ thuộc cấu hình."""
-        for path in _python_files("domain"):
-            assert "document_service.config" not in path.read_text(encoding="utf-8")
+        leaked = _depends_on(path, "document_service.config")
+        assert not leaked, f"{path.name} import {leaked}"
 
 
 class TestWritePathRules:
@@ -73,7 +115,9 @@ class TestWritePathRules:
         path = SRC / "application" / "usecase" / "approve_version.py"
         source = path.read_text(encoding="utf-8")
         assert "self._policies.lifecycle.transition" in source
-        assert "patch_controlled_fields" in source
+        assert source.index("intents.create(intent)") < source.index("self._saga.resume(intent)")
+        saga = SRC / "application" / "orchestration" / "status_change_saga.py"
+        assert "patch_controlled_fields" in saga.read_text(encoding="utf-8")
 
     def test_write_use_cases_record_audit(self) -> None:
         """Mọi use case ghi đều gọi `_record` để ghi audit (bất biến I12)."""
@@ -82,7 +126,7 @@ class TestWritePathRules:
             "create_version.py",
             "approve_version.py",
             "relationships.py",
-            "search_documents.py",
+            "access_policy.py",
         )
         for name in write_use_cases:
             source = (SRC / "application" / "usecase" / name).read_text(encoding="utf-8")

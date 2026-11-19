@@ -7,9 +7,11 @@ store) được chốt bằng kết quả test, không bằng lập luận.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
+import respx
 
 from document_service.adapter.outbound.fake.in_memory import (
     InMemoryIntentStore,
@@ -18,13 +20,17 @@ from document_service.adapter.outbound.fake.in_memory import (
 )
 from document_service.adapter.outbound.intent.s3_manifest_store import S3ManifestIntentStore
 from document_service.adapter.outbound.intent.sqlite_store import SqliteRegistryIntentStore
+from document_service.adapter.outbound.openmetadata import endpoints
+from document_service.adapter.outbound.openmetadata.client import OmHttpClient
+from document_service.adapter.outbound.openmetadata.lineage import OmLineageRelationshipStore
 from document_service.adapter.outbound.relationship.sqlite_registry import (
     SqliteRelationshipRegistry,
 )
 from document_service.adapter.outbound.sqlite_support import SqliteDatabase
-from document_service.config import DependencyResiliencePolicy
+from document_service.config import CatalogSettings, DependencyResiliencePolicy
 from document_service.domain.port import IntentStorePort, RelationshipStorePort
 from document_service.infrastructure.resilience.executor import ResilientCallExecutor
+from tests.contract.fake_openmetadata import FakeOpenMetadataServer
 
 
 @pytest.fixture
@@ -58,11 +64,23 @@ def intent_store(
     return S3ManifestIntentStore(InMemoryObjectStore(), "test-bucket", executor)
 
 
-@pytest.fixture(params=["in_memory", "sqlite"])
-def relationship_store(
+@pytest.fixture(params=["in_memory", "sqlite", "om_lineage"])
+async def relationship_store(
     request: pytest.FixtureRequest, database: SqliteDatabase, executor: ResilientCallExecutor
-) -> RelationshipStorePort:
-    """Hai hiện thực của relationship store, ứng với quyết định Q4."""
+) -> AsyncIterator[RelationshipStorePort]:
+    """Ba hiện thực của relationship store, ứng với quyết định Q4."""
     if request.param == "in_memory":
-        return InMemoryRelationshipStore()
-    return SqliteRelationshipRegistry(database, executor)
+        yield InMemoryRelationshipStore()
+    elif request.param == "sqlite":
+        yield SqliteRelationshipRegistry(database, executor)
+    else:
+        server = FakeOpenMetadataServer("http://om.contract.test")
+        client = OmHttpClient(CatalogSettings(base_url=server.base_url), executor)
+        try:
+            with respx.mock(assert_all_called=False) as router:
+                server.install(router)
+                for version in ("VER-SRS-0020", "VER-SRS-0021", "VER-URD-0012", "VER-SAD-0011"):
+                    await client.put(endpoints.FILES, {"name": version, "directory": "raw.docs"})
+                yield OmLineageRelationshipStore(client, executor)
+        finally:
+            await client.aclose()

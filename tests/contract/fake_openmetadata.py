@@ -27,6 +27,7 @@ class FakeOpenMetadataServer:
         self._version = version
         self._directories: dict[str, dict[str, Any]] = {}
         self._files: dict[str, dict[str, Any]] = {}
+        self._edges: dict[tuple[str, str], dict[str, Any]] = {}
         self._counter = 0
 
     @property
@@ -45,6 +46,10 @@ class FakeOpenMetadataServer:
         router.put(f"{self._base_url}/api/v1/drives/files").mock(side_effect=self._put_file)
         router.get(f"{self._base_url}/api/v1/drives/files").mock(side_effect=self._list_files)
         router.get(f"{self._base_url}/api/v1/search/query").mock(side_effect=self._search)
+        lineage = f"{self._base_url}/api/v1/lineage"
+        router.put(lineage).mock(side_effect=self._put_lineage)
+        router.get(f"{lineage}/getLineage").mock(side_effect=self._get_lineage)
+        router.delete(lineage).mock(side_effect=self._delete_lineage)
         router.route(
             method="GET",
             url__startswith=f"{self._base_url}/api/v1/drives/directories/name/",
@@ -123,8 +128,44 @@ class FakeOpenMetadataServer:
         """GET danh sách File theo Directory."""
         params = parse_qs(urlparse(str(request.url)).query)
         directory = params.get("directory", [""])[0]
-        items = [item for item in self._files.values() if item["directory"] == directory]
+        items = [
+            item for item in self._files.values() if not directory or item["directory"] == directory
+        ]
         return httpx.Response(200, json={"data": items})
+
+    def _put_lineage(self, request: httpx.Request) -> httpx.Response:
+        """Ghi cạnh theo UUID của hai File entity."""
+        edge = json.loads(request.content)["edge"]
+        files = {item["id"]: item for item in self._files.values()}
+        source, target = edge["fromEntity"]["id"], edge["toEntity"]["id"]
+        if source not in files or target not in files:
+            return httpx.Response(404)
+        self._edges[source, target] = {
+            "fromEntity": files[source],
+            "toEntity": files[target],
+            "description": edge["lineageDetails"]["description"],
+        }
+        return httpx.Response(200, json={})
+
+    def _get_lineage(self, request: httpx.Request) -> httpx.Response:
+        """GET trả hai bảng cạnh theo FQN và description ở cấp cạnh."""
+        fqn = request.url.params["fqn"]
+        upstream, downstream = {}, {}
+        for edge in self._edges.values():
+            source = edge["fromEntity"]["fullyQualifiedName"]
+            target = edge["toEntity"]["fullyQualifiedName"]
+            key = f"{source}--->{target}"
+            if target == fqn:
+                upstream[key] = edge
+            if source == fqn:
+                downstream[key] = edge
+        return httpx.Response(200, json={"upstreamEdges": upstream, "downstreamEdges": downstream})
+
+    def _delete_lineage(self, request: httpx.Request) -> httpx.Response:
+        """Xóa cạnh theo cặp UUID."""
+        params = request.url.params
+        self._edges.pop((params["fromId"], params["toId"]), None)
+        return httpx.Response(200, json={})
 
     def _patch_directory(self, request: httpx.Request) -> httpx.Response:
         """PATCH Directory bằng JSON Patch chỉ gồm `replace` trên `extension`."""
@@ -143,10 +184,13 @@ class FakeOpenMetadataServer:
         if target is None:
             return httpx.Response(404, json={"message": f"không có entity {entity_id}"})
         for operation in json.loads(request.content):
-            if operation.get("op") != "replace":
-                return httpx.Response(400, json={"message": "chỉ hỗ trợ replace trong test này"})
+            if operation.get("op") not in ("add", "replace"):
+                return httpx.Response(400, json={"message": "phép patch không hợp lệ"})
             field = str(operation["path"]).removeprefix("/extension/")
-            target.setdefault("extension", {})[field] = operation["value"]
+            extension = target.setdefault("extension", {})
+            if operation["op"] == "replace" and field not in extension:
+                return httpx.Response(400, json={"message": "trường chưa tồn tại"})
+            extension[field] = operation["value"]
         target["version"] = float(target.get("version", 0.0)) + 0.1
         return httpx.Response(200, json=target)
 
@@ -160,7 +204,12 @@ class FakeOpenMetadataServer:
             extension = entity.get("extension", {})
             if all(str(extension.get(field, "")) == value for field, value in clauses):
                 hits.append({"_source": {"extension": extension}})
-        return httpx.Response(200, json={"hits": {"total": {"value": len(hits)}, "hits": hits}})
+        offset = int(params.get("from", ["0"])[0])
+        size = int(params.get("size", ["20"])[0])
+        return httpx.Response(
+            200,
+            json={"hits": {"total": {"value": len(hits)}, "hits": hits[offset : offset + size]}},
+        )
 
     def _clauses(self, raw_filter: str) -> list[tuple[str, str]]:
         """Đọc danh sách điều kiện term từ `query_filter`."""

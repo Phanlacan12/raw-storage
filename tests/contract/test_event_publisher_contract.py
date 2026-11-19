@@ -7,26 +7,29 @@ ngưỡng thử thì cảnh báo thay vì thử lại vô hạn.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Iterator
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
 import respx
 
 from document_service.adapter.outbound.fake.in_memory import InMemoryEventPublisher
-from document_service.adapter.outbound.observability.outbox import (
+from document_service.adapter.outbound.observability.outbox_dispatcher import (
     OutboxDispatcher,
-    OutboxEventPublisher,
-    SqliteOutbox,
     WebhookEventSender,
 )
+from document_service.adapter.outbound.observability.outbox_publisher import OutboxEventPublisher
+from document_service.adapter.outbound.observability.outbox_store import SqliteOutbox
 from document_service.adapter.outbound.sqlite_support import SqliteDatabase
 from document_service.config import DependencyResiliencePolicy, EventSettings
 from document_service.domain.model import DomainEvent
 from document_service.domain.port import EventPublisherPort
 from document_service.domain.value import DocumentId, DocumentVersionId
 from document_service.infrastructure.resilience.executor import ResilientCallExecutor
+from document_service.worker.dispatch import OutboxDispatchRunner
 
 WEBHOOK = "http://downstream.test/events"
 DOCUMENT_ID = DocumentId("DOC-EVENT-0001")
@@ -213,3 +216,22 @@ class TestOutboxDispatcher:
         await publisher.publish(_event())
         publisher.invalidate_health_cache()
         assert (await publisher.check_health()).status.value == "DEGRADED"
+
+
+async def test_worker_dispatches_and_closes_sender(
+    outbox: SqliteOutbox, executor: ResilientCallExecutor, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Worker gọi dispatcher thật và đóng HTTP client khi hủy vòng lặp."""
+    settings = EventSettings(enabled=True, webhook_urls=[WEBHOOK], batch_size=1)
+    await outbox.append(_event())
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(204))
+    ) as client:
+        sender = WebhookEventSender(settings, executor, client)
+        dispatcher = OutboxDispatcher(outbox, sender, settings)
+        runner = OutboxDispatchRunner(dispatcher, 10)
+        monkeypatch.setattr(asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
+        with pytest.raises(asyncio.CancelledError):
+            await runner.run_forever()
+        assert client.is_closed
+    assert await outbox.pending_count() == 0

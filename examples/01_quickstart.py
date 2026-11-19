@@ -83,11 +83,13 @@ async def main() -> None:
         await client.post(
             f"/api/v1/versions/{v1}/status",
             params={"document_id": document_id},
+            headers={"Idempotency-Key": f"approve-{v1}"},
             json={"status": "Approved"},
         )
         approve = await client.post(
             f"/api/v1/versions/{v2}/status",
             params={"document_id": document_id},
+            headers={"Idempotency-Key": f"approve-{v2}"},
             json={"status": "Approved"},
         )
         document = await client.get(f"/api/v1/documents/{document_id}")
@@ -116,9 +118,9 @@ async def main() -> None:
 
         heading("8. Audit trail of the document")
         audit = await client.get(f"/api/v1/documents/{document_id}/audit")
-        for event in audit.json():
+        for event in audit.json()["items"]:
             line(event["action"], f'{event["result"]} · {event["detail"][:40]}')
-        actions = [event["action"] for event in audit.json()]
+        actions = [event["action"] for event in audit.json()["items"]]
         check("audit records every action", actions.count("version.created") == 2)
 
         print("\nExample 1 complete.")

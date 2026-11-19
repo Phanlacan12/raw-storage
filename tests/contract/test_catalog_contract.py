@@ -19,12 +19,19 @@ from document_service.adapter.outbound.openmetadata.catalog_adapter import (
     OpenMetadataCatalogAdapter,
 )
 from document_service.adapter.outbound.openmetadata.client import OmHttpClient
-from document_service.application.metadata_builder import CatalogMetadataBuilder
 from document_service.config import CatalogSettings, DependencyResiliencePolicy
 from document_service.domain.dto import SearchFilter, SearchQuery
-from document_service.domain.model import AccessPolicy, Document, DocumentMetadata, DocumentVersion
+from document_service.domain.metadata_builder import CatalogMetadataBuilder
+from document_service.domain.model import (
+    AccessPolicy,
+    Collection,
+    Document,
+    DocumentMetadata,
+    DocumentVersion,
+)
 from document_service.domain.port import MetadataCatalogPort
 from document_service.domain.value import (
+    Actor,
     Checksum,
     DocumentId,
     DocumentStatus,
@@ -159,12 +166,21 @@ class TestCatalogContract:
         document = _document()
         await _register(catalog, document)
         version = _version(document, "0003", "1.0")
-        await catalog.register_version(version, BUILDER.build(document, version))
+        metadata = BUILDER.build(document, version)
+        for field in ("approved_by", "approved_at", "obsoleted_by", "obsoleted_at"):
+            metadata.pop(field)  # Entity được tạo trước khi có metadata vòng đời.
+        await catalog.register_version(version, metadata)
+        version.mark_approved(Actor("reviewer"))
+        version.mark_obsolete(Actor("editor"))
         await catalog.patch_controlled_fields(
-            document.document_id, version.version_id, {"status": str(DocumentStatus.APPROVED)}
+            document.document_id, version.version_id, BUILDER.lifecycle_fields(version)
         )
         loaded = (await catalog.list_versions(document.document_id))[0]
-        assert loaded.status is DocumentStatus.APPROVED
+        assert loaded.status is DocumentStatus.OBSOLETE
+        assert loaded.approved_by == "reviewer"
+        assert loaded.approved_at == version.approved_at
+        assert loaded.obsoleted_by == "editor"
+        assert loaded.obsoleted_at == version.obsoleted_at
 
     async def test_patch_document_fields_sets_current_version(
         self, catalog: MetadataCatalogPort
@@ -175,8 +191,15 @@ class TestCatalogContract:
         version = _version(document, "0004", "1.0")
         await catalog.register_version(version, BUILDER.build(document, version))
         document.current_version_id = version.version_id
+        document.access_policy = AccessPolicy(
+            classification="secret",
+            allowed_groups=("team, one",),
+            allowed_principals=("alice",),
+            require_proxy_download=True,
+        )
         await catalog.patch_document_fields(document.document_id, BUILDER.document_fields(document))
         loaded = await catalog.read_document(document.document_id)
+        assert loaded.access_policy == document.access_policy
         assert loaded.current_version_id == version.version_id
 
     async def test_search_filters_on_metadata(self, catalog: MetadataCatalogPort) -> None:
@@ -233,3 +256,24 @@ class TestCatalogContract:
         after = len(await catalog.list_versions(document.document_id))
         assert result.healthy is True
         assert before == after
+
+
+async def test_collection_lookup_round_trip(catalog: MetadataCatalogPort) -> None:
+    """Không nhầm directory tài liệu với collection và giữ thông tin collection."""
+    assert await catalog.find_collection("project") is None
+    collection = Collection("project", "Example", parent_collection_id="root", owner="editor")
+    await catalog.ensure_collection(collection)
+    assert await catalog.find_collection("project") == collection
+
+
+async def test_registered_owner_and_title_filters(catalog: MetadataCatalogPort) -> None:
+    """Các filter được ghi và tra cứu thực sự trên cả hai catalog."""
+    doc = _document()
+    await _register(catalog, doc)
+    version = _version(doc, "0001", "1.0")
+    await catalog.register_version(version, BUILDER.build(doc, version))
+    for field, value in [("owner", doc.metadata.owner), ("title", doc.metadata.title)]:
+        hits = await catalog.search(SearchQuery(filters=(SearchFilter(field, value),)))
+        assert [hit.version_id for hit in hits.hits] == [version.version_id]
+        missing = await catalog.search(SearchQuery(filters=(SearchFilter(field, "missing"),)))
+        assert missing.hits == ()

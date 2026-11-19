@@ -11,14 +11,42 @@ Hai nhóm khẳng định, tách riêng vì hành vi **khác nhau có chủ ý**
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
-from document_service.adapter.outbound.fake.in_memory import AllowAllPolicyDecision, InMemoryCatalog
+from document_service.adapter.outbound.fake.in_memory import (
+    AllowAllPolicyDecision,
+    InMemoryCatalog,
+    InMemoryEventPublisher,
+)
 from document_service.adapter.outbound.policy.policy_decision import CachingPolicyDecision
+from document_service.application.context import PortBundle
+from document_service.application.usecase.access_policy import (
+    UpdateAccessPolicyCommand,
+    UpdateAccessPolicyUseCase,
+)
+from document_service.application.usecase.issue_download import (
+    IssueDownloadCommand,
+    IssueDownloadUseCase,
+)
+from document_service.application.usecase.register_document import (
+    RegisterDocumentCommand,
+    RegisterDocumentUseCase,
+)
 from document_service.config import SecuritySettings
-from document_service.domain.model import AccessPolicy, Document, Principal
+from document_service.domain.errors import PolicyDeniedError
+from document_service.domain.model import AccessPolicy, Document, DocumentVersion, Principal
 from document_service.domain.port import PolicyDecisionPort
-from document_service.domain.value import Action, DocumentId
+from document_service.domain.value import (
+    Action,
+    Checksum,
+    DocumentId,
+    DocumentVersionId,
+    IdempotencyKey,
+    StorageUri,
+    VersionLabel,
+)
 from document_service.utils.clock import FixedClock
 
 DOCUMENT_ID = DocumentId("DOC-POLICY-0001")
@@ -146,7 +174,7 @@ class TestEnforcingPolicyDecision:
         await prepared_catalog.patch_document_fields(
             DOCUMENT_ID, {"classification": "confidential"}
         )
-        decision.invalidate(DOCUMENT_ID)
+        await decision.invalidate(DOCUMENT_ID)
         assert (await decision.effective_policy(DOCUMENT_ID)).classification == "confidential"
 
 
@@ -175,3 +203,58 @@ class TestDevPolicyDecision:
         decision = CachingPolicyDecision(prepared_catalog, settings)
         user = Principal(principal_id="dev")
         assert (await decision.decide(user, Action.MANAGE_POLICY, "x")).allowed is True
+
+
+async def test_revoke_stops_new_downloads_before_ttl(ports: PortBundle) -> None:
+    """POC-11/23: cấp link, thu hồi rồi thử lại ngay qua use case thật."""
+    settings = SecuritySettings(auth_disabled=False, policy_cache_ttl_seconds=600)
+    ports = replace(ports, policies=CachingPolicyDecision(ports.catalog, settings))
+    admin = Principal("admin", is_admin=True)
+    member = Principal("reader")
+    policy = AccessPolicy(allowed_principals=("reader",))
+    register = RegisterDocumentUseCase(ports)
+    registration = RegisterDocumentCommand(
+        admin,
+        document_id=DOCUMENT_ID,
+        access_policy=policy,
+        idempotency_key=IdempotencyKey("doc-register-key"),
+    )
+    await register.execute(registration)
+    await register.execute(registration)
+    version = DocumentVersion(
+        DocumentVersionId("VER-1"),
+        DOCUMENT_ID,
+        VersionLabel("1.0"),
+        Checksum.parse("sha256:" + "a" * 64),
+        StorageUri("bucket", "file"),
+        "input.pdf",
+        "application/pdf",
+        10,
+    )
+    await ports.catalog.register_version(version, {})
+    download = IssueDownloadUseCase(ports)
+    command = IssueDownloadCommand(DOCUMENT_ID, version.version_id, member)
+    assert (await download.execute(command)).url
+    remote = IssueDownloadUseCase(
+        replace(ports, policies=CachingPolicyDecision(ports.catalog, settings))
+    )
+    assert (await remote.execute(command)).url
+    revoke = UpdateAccessPolicyUseCase(ports)
+    update = UpdateAccessPolicyCommand(
+        DOCUMENT_ID,
+        admin,
+        AccessPolicy(require_proxy_download=True),
+        IdempotencyKey("policy-revoke-key"),
+    )
+    await revoke.execute(update)
+    await revoke.execute(update)
+    assert await ports.policies.effective_policy(DOCUMENT_ID) == update.access_policy
+    with pytest.raises(PolicyDeniedError):
+        await download.execute(command)
+    with pytest.raises(PolicyDeniedError):
+        await remote.execute(command)
+    assert isinstance(ports.events, InMemoryEventPublisher)
+    assert [(e.event_type, e.document_id) for e in ports.events.events] == [
+        ("document.created", DOCUMENT_ID),
+        ("access.changed", DOCUMENT_ID),
+    ]

@@ -6,6 +6,7 @@ job phục hồi hoàn tất được **mà không nhân đôi phiên bản**.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -15,11 +16,17 @@ from document_service.adapter.outbound.fake.in_memory import (
     InMemoryIntentStore,
     InMemoryObjectStore,
 )
+from document_service.application.context import PortBundle
 from document_service.application.orchestration.snapshot import VersionSnapshot
 from document_service.application.orchestration.upload_saga import UploadSaga
 from document_service.config import Settings
-from document_service.domain.errors import DependencyUnavailableError
-from document_service.domain.model import Document, DocumentMetadata, DocumentVersion, UploadIntent
+from document_service.domain.errors import ChecksumMismatchError, DependencyUnavailableError
+from document_service.domain.model import (
+    Document,
+    DocumentMetadata,
+    DocumentVersion,
+    ProcessingIntent,
+)
 from document_service.domain.value import (
     Checksum,
     DocumentId,
@@ -30,13 +37,14 @@ from document_service.domain.value import (
     StorageUri,
     VersionLabel,
 )
+from document_service.utils.hashing import digest_of
 from document_service.worker.reconcile import (  # noqa: I001
     DanglingEntityScanner,
     IntentRecoveryJob,
     OrphanObjectScanner,
 )
 
-CHECKSUM = Checksum.parse("sha256:" + "e" * 64)
+CHECKSUM = Checksum("sha256", digest_of(b"data"))
 DOCUMENT_ID = DocumentId("DOC-1")
 VERSION_ID = DocumentVersionId("VER-1")
 
@@ -71,9 +79,9 @@ def _version() -> DocumentVersion:
     )
 
 
-def _intent(version: DocumentVersion) -> UploadIntent:
+def _intent(version: DocumentVersion) -> ProcessingIntent:
     """Intent mẫu kèm snapshot phiên bản."""
-    return UploadIntent(
+    return ProcessingIntent(
         request_id=RequestId("REQ-1"),
         idempotency_key=IdempotencyKey("idem-key-0001"),
         document_id=DOCUMENT_ID,
@@ -105,7 +113,9 @@ def recovery_settings(settings: Settings) -> Settings:
 class TestIntentRecovery:
     """Phục hồi intent dở dang."""
 
-    async def test_recovers_after_catalog_failure(self, recovery_settings: Settings) -> None:
+    async def test_recovers_after_catalog_failure(
+        self, ports: PortBundle, recovery_settings: Settings
+    ) -> None:
         """POC-18: object đã ghi, catalog lỗi, job phục hồi hoàn tất được."""
         catalog = FailingCatalog(failures=1)
         objects = InMemoryObjectStore()
@@ -125,7 +135,9 @@ class TestIntentRecovery:
         await intents.save(intent)
         assert intent.state is IntentState.RETRY_PENDING
 
-        job = IntentRecoveryJob(intents, saga, catalog, recovery_settings)
+        job = IntentRecoveryJob(
+            replace(ports, intents=intents, objects=objects, catalog=catalog), recovery_settings
+        )
         report = await job.run_once()
         assert report.recovered == 1
         recovered = await intents.find_by_request_id(intent.request_id)
@@ -134,7 +146,26 @@ class TestIntentRecovery:
         versions = await catalog.list_versions(DOCUMENT_ID)
         assert len(versions) == 1
 
-    async def test_marks_failed_after_retry_budget(self, recovery_settings: Settings) -> None:
+    async def test_checksum_mismatch_blocks_catalog_and_recovery(self) -> None:
+        """Checksum lệch chặn đăng ký catalog ở cả đường ghi lẫn phục hồi (I10)."""
+        catalog = InMemoryCatalog()
+        objects = InMemoryObjectStore()
+        intents = InMemoryIntentStore()
+        await catalog.register_document(Document(document_id=DOCUMENT_ID))
+        version = _version()
+        intent = _intent(version)
+        await intents.create(intent)
+        saga = UploadSaga(objects, catalog, intents)
+        with pytest.raises(ChecksumMismatchError):
+            await saga.run(intent, version, {}, _stream(b"bad"))
+        assert intent.state is IntentState.RETRY_PENDING
+        assert not await saga.resume(intent, {})
+        assert intent.state is IntentState.FAILED
+        assert await catalog.list_versions(DOCUMENT_ID) == []
+
+    async def test_marks_failed_after_retry_budget(
+        self, ports: PortBundle, recovery_settings: Settings
+    ) -> None:
         """Vượt ngưỡng retry thì intent chuyển Failed để vận hành xử lý."""
         catalog = InMemoryCatalog()
         objects = InMemoryObjectStore()
@@ -145,7 +176,7 @@ class TestIntentRecovery:
         intent.state = IntentState.RETRY_PENDING
         await intents.create(intent)
         job = IntentRecoveryJob(
-            intents, UploadSaga(objects, catalog, intents), catalog, recovery_settings
+            replace(ports, intents=intents, objects=objects, catalog=catalog), recovery_settings
         )
         report = await job.run_once()
         assert report.failed == 1
@@ -153,7 +184,9 @@ class TestIntentRecovery:
         assert stored is not None
         assert stored.state is IntentState.FAILED
 
-    async def test_resume_fails_when_object_missing(self, recovery_settings: Settings) -> None:
+    async def test_resume_fails_when_object_missing(
+        self, ports: PortBundle, recovery_settings: Settings
+    ) -> None:
         """Không có object thì không tạo phiên bản rỗng, intent bị đánh Failed."""
         catalog = InMemoryCatalog()
         objects = InMemoryObjectStore()
@@ -163,8 +196,9 @@ class TestIntentRecovery:
         version = _version()
         intent = _intent(version)
         await intents.create(intent)
-        saga = UploadSaga(objects, catalog, intents)
-        job = IntentRecoveryJob(intents, saga, catalog, recovery_settings)
+        job = IntentRecoveryJob(
+            replace(ports, intents=intents, objects=objects, catalog=catalog), recovery_settings
+        )
         report = await job.run_once()
         assert report.failed == 1
         stored = await intents.find_by_request_id(intent.request_id)

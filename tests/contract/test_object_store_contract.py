@@ -18,6 +18,7 @@ from document_service.config import DependencyResiliencePolicy, StorageSettings
 from document_service.domain.port import ObjectStorePort
 from document_service.domain.value import Checksum, DocumentId, DocumentVersionId, StorageUri
 from document_service.infrastructure.resilience.executor import ResilientCallExecutor
+from document_service.utils.hashing import digest_of
 
 BUCKET = "contract-bucket"
 CHECKSUM = Checksum.parse("sha256:" + "b" * 64)
@@ -66,8 +67,10 @@ class TestObjectStoreContract:
         """Ghi rồi đọc được kích thước object."""
         uri = _uri()
         result = await object_store.put_immutable(uri, _stream(b"noi dung"), CHECKSUM)
+        assert result.checksum == Checksum("sha256", digest_of(b"noi dung"))
         assert result.size_bytes == len(b"noi dung")
         info = await object_store.head(uri)
+        assert info.checksum == result.checksum
         assert info.size_bytes == len(b"noi dung")
 
     async def test_head_missing_object(self, object_store: ObjectStorePort) -> None:
@@ -81,9 +84,24 @@ class TestObjectStoreContract:
         uri = _uri()
         await object_store.put_immutable(uri, _stream(b"ban dau"), CHECKSUM)
         again = await object_store.put_immutable(uri, _stream(b"ghi de"), CHECKSUM)
+        assert again.checksum == Checksum("sha256", digest_of(b"ban dau"))
         assert again.already_existed is True
         chunks = [chunk async for chunk in object_store.open_stream(uri)]
         assert b"".join(chunks) == b"ban dau"
+
+    async def test_head_rehashes_legacy_object(self, moto_s3: None) -> None:
+        """Metadata checksum của bản cũ chỉ là giá trị client khai."""
+        import boto3
+
+        uri = _uri()
+        boto3.client("s3", region_name="us-east-1").put_object(
+            Bucket=uri.bucket, Key=uri.key, Body=b"legacy", Metadata={"checksum": str(CHECKSUM)}
+        )
+        settings = StorageSettings(endpoint="", bucket=BUCKET, access_key="test", secret_key="test")
+        store = S3ObjectStoreAdapter(
+            settings, ResilientCallExecutor("object_store", DependencyResiliencePolicy())
+        )
+        assert (await store.head(uri)).checksum == Checksum("sha256", digest_of(b"legacy"))
 
     async def test_presign_returns_url(self, object_store: ObjectStorePort) -> None:
         """Link tải có thời hạn được cấp."""

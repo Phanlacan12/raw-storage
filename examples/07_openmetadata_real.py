@@ -95,9 +95,9 @@ async def main() -> None:
     os.environ["DS_APP__PROFILE"] = "openmetadata"
     from document_service.adapter.outbound.openmetadata.bootstrap import OmSchemaMigration
     from document_service.adapter.outbound.openmetadata.client import OmHttpClient
-    from document_service.application.metadata_builder import CatalogMetadataBuilder
     from document_service.config import SettingsProvider
     from document_service.domain.dto import SearchFilter, SearchQuery, UploadRequest
+    from document_service.domain.metadata_builder import CatalogMetadataBuilder
     from document_service.domain.model import DocumentMetadata, Principal
     from document_service.domain.value import Checksum, IdempotencyKey
     from document_service.infrastructure.container import ServiceContainer
@@ -215,16 +215,17 @@ async def main() -> None:
         TransitionStatusCommand(
             document_id=document.document_id,
             version_id=result.version.version_id,
+            idempotency_key=IdempotencyKey(f"status-{result.version.version_id}"),
             target_status=DocumentStatus.APPROVED,
             principal=principal,
         )
     )
-    line("status", approval.approved.status)
+    line("status", approval.changed.status)
     # Đọc LẠI từ OpenMetadata thay vì tin vào object trong bộ nhớ: nếu lệnh patch
     # current_version_id xuống catalog trượt âm thầm, chỉ check này mới bắt được.
     reread = await container.ports.catalog.read_document(document.document_id)
     line("current_version_id", reread.current_version_id)
-    check("status is Approved", approval.approved.status is DocumentStatus.APPROVED)
+    check("status is Approved", approval.changed.status is DocumentStatus.APPROVED)
     check("catalog points at this version", reread.current_version_id == result.version.version_id)
 
     # === BƯỚC 5 ======================================================================
