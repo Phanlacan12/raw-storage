@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import datetime
 from typing import Any
@@ -104,6 +105,9 @@ class OmExtensionMapper:
         for key, value in metadata.items():
             if value is None:
                 continue
+            if key == "access_policy":
+                extension[key] = json.dumps(value, ensure_ascii=False)
+                continue
             extension[key] = (
                 ",".join(str(item) for item in value) if isinstance(value, (list, tuple)) else value
             )
@@ -154,6 +158,7 @@ class OmDirectoryMapper:
             "extension": {
                 "collection_id": collection.collection_id,
                 "collection_type": collection.collection_type,
+                "parent_collection_id": collection.parent_collection_id or "",
                 "owner": collection.owner,
                 "department": collection.department,
             },
@@ -186,11 +191,15 @@ class OmDirectoryMapper:
         if not metadata.title:
             metadata = replace(metadata, title=str(payload.get("displayName", "")))
         current = extension.get("current_version_id") or ""
+        acl = json.loads(extension.get("access_policy") or "{}")
         return Document(
             document_id=document_id,
             metadata=metadata,
             access_policy=AccessPolicy(
-                classification=str(extension.get("classification", "restricted"))
+                classification=str(extension.get("classification", "restricted")),
+                allowed_groups=tuple(acl.get("allowed_groups", ())),
+                allowed_principals=tuple(acl.get("allowed_principals", ())),
+                require_proxy_download=bool(acl.get("require_proxy_download", False)),
             ),
             retention_policy=str(extension.get("retention_policy", "")),
             current_version_id=DocumentVersionId(str(current)) if current else None,
@@ -240,35 +249,39 @@ class OmFileEntityMapper:
             content_format=str(extension.get("format", "")),
             size_bytes=int(extension.get("size", 0) or 0),
             status=DocumentStatus(str(extension.get("status", DocumentStatus.DRAFT))),
+            approved_by=extension.get("approved_by") or None,
+            obsoleted_by=extension.get("obsoleted_by") or None,
+            approved_at=self._optional_time(extension.get("approved_at")),
+            obsoleted_at=self._optional_time(extension.get("obsoleted_at")),
             created_by=str(extension.get("created_by", "")),
-            created_at=self._parse_time(extension.get("created_at")),
+            created_at=self._optional_time(extension.get("created_at")) or utc_now(),
         )
 
-    def _parse_time(self, raw: Any) -> datetime:
-        """Đọc thời điểm tạo, mặc định là hiện tại nếu thiếu."""
+    def _optional_time(self, raw: Any) -> datetime | None:
+        """Đọc thời điểm ISO nếu catalog đã lưu."""
         if isinstance(raw, str) and raw:
             try:
                 return datetime.fromisoformat(raw)
             except ValueError:
-                return utc_now()
-        return utc_now()
+                return None
+        return None
 
 
 class OmJsonPatchBuilder:
-    """Dựng JSON Patch chỉ gồm phép `replace` trên đường dẫn cố định.
-
-    Chỉ dùng `replace` vì theo bảng mục 11.2, `add` vào mảng **không** idempotent nên
-    không retry an toàn được.
-    """
+    """Dựng JSON Patch trên các thuộc tính có tên cố định của object extension."""
 
     def __init__(self) -> None:
         """Khởi tạo danh sách phép rỗng."""
         self._operations: list[dict[str, Any]] = []
 
-    def replace_extension(self, field_name: str, value: Any) -> OmJsonPatchBuilder:
+    def set_extension(self, field_name: str, value: Any, exists: bool) -> OmJsonPatchBuilder:
         """Thay giá trị một trường trong `extension`."""
         self._operations.append(
-            {"op": "replace", "path": f"/extension/{field_name}", "value": value}
+            {
+                "op": "replace" if exists else "add",
+                "path": f"/extension/{field_name}",
+                "value": value,
+            }
         )
         return self
 
@@ -277,11 +290,11 @@ class OmJsonPatchBuilder:
         return list(self._operations)
 
     @classmethod
-    def from_fields(cls, fields: dict[str, Any]) -> list[dict[str, Any]]:
+    def from_fields(cls, fields: dict[str, Any], existing: dict[str, Any]) -> list[dict[str, Any]]:
         """Dựng patch từ một dict trường cần cập nhật."""
         builder = cls()
         for key, value in fields.items():
-            builder.replace_extension(key, value)
+            builder.set_extension(key, value, key in existing)
         return builder.build()
 
 
@@ -297,6 +310,6 @@ class OmEntityVersionGuard:
         return float(payload.get("version", 0.0) or 0.0)
 
     def changed_unexpectedly(self, captured: float, payload: dict[str, Any]) -> bool:
-        """Entity đã bị người khác sửa giữa lúc đọc và lúc ghi hay chưa."""
+        """So sánh hai version quan sát được; một lượt PATCH cũng có thể tăng version."""
         current = float(payload.get("version", 0.0) or 0.0)
-        return current < captured
+        return current != captured

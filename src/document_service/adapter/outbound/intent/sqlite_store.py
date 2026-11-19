@@ -14,13 +14,14 @@ from typing import Any
 from document_service.adapter.outbound.base import OutboundAdapter
 from document_service.adapter.outbound.sqlite_support import SqliteDatabase
 from document_service.domain.errors import ConcurrencyConflictError
-from document_service.domain.model import UploadIntent
+from document_service.domain.model import ProcessingIntent
 from document_service.domain.port import IntentStorePort
 from document_service.domain.value import (
     Checksum,
     DocumentId,
     DocumentVersionId,
     IdempotencyKey,
+    IntentKind,
     IntentState,
     RequestId,
 )
@@ -30,15 +31,15 @@ from document_service.utils.clock import utc_now
 from document_service.utils.jsonx import JsonCodec
 
 _INSERT = """
-INSERT INTO upload_intent (
-    request_id, idempotency_key, document_id, version_id, expected_checksum,
+INSERT INTO processing_intent (
+    request_id, idempotency_key, document_id, version_id, expected_checksum, kind,
     state, retry_count, created_at, updated_at, last_error, payload
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 _SELECT = """
-SELECT request_id, idempotency_key, document_id, version_id, expected_checksum,
+SELECT request_id, idempotency_key, document_id, version_id, expected_checksum, kind,
        state, retry_count, created_at, updated_at, last_error, payload
-FROM upload_intent
+FROM processing_intent
 """
 
 
@@ -51,7 +52,7 @@ class SqliteRegistryIntentStore(IntentStorePort, OutboundAdapter):
         self._db = database
         self._codec = JsonCodec()
 
-    async def create(self, intent: UploadIntent) -> None:
+    async def create(self, intent: ProcessingIntent) -> None:
         """Ghi intent mới, báo xung đột nếu idempotency key đã tồn tại."""
         try:
             await self._call(lambda: self._db.execute(_INSERT, self._as_row(intent)))
@@ -64,18 +65,18 @@ class SqliteRegistryIntentStore(IntentStorePort, OutboundAdapter):
         """Cập nhật trạng thái intent."""
         await self._call(
             lambda: self._db.execute(
-                "UPDATE upload_intent SET state = ?, updated_at = ? WHERE request_id = ?",
+                "UPDATE processing_intent SET state = ?, updated_at = ? WHERE request_id = ?",
                 (str(state), utc_now().isoformat(), str(request_id)),
             )
         )
 
-    async def save(self, intent: UploadIntent) -> None:
+    async def save(self, intent: ProcessingIntent) -> None:
         """Ghi lại toàn bộ intent, dùng khi tăng retry_count hoặc ghi lỗi."""
         intent.updated_at = utc_now()
         await self._call(
             lambda: self._db.execute(
                 """
-                UPDATE upload_intent
+                UPDATE processing_intent
                 SET state = ?, retry_count = ?, updated_at = ?, last_error = ?, payload = ?
                 WHERE request_id = ?
                 """,
@@ -90,45 +91,49 @@ class SqliteRegistryIntentStore(IntentStorePort, OutboundAdapter):
             )
         )
 
-    async def find_by_idempotency_key(self, key: IdempotencyKey) -> UploadIntent | None:
+    async def find_by_idempotency_key(self, key: IdempotencyKey) -> ProcessingIntent | None:
         """Tra intent theo idempotency key."""
         rows = await self._call(
             lambda: self._db.query(f"{_SELECT} WHERE idempotency_key = ?", (str(key),))
         )
         return self._from_row(rows[0]) if rows else None
 
-    async def find_by_request_id(self, request_id: RequestId) -> UploadIntent | None:
+    async def find_by_request_id(self, request_id: RequestId) -> ProcessingIntent | None:
         """Tra intent theo request id."""
         rows = await self._call(
             lambda: self._db.query(f"{_SELECT} WHERE request_id = ?", (str(request_id),))
         )
         return self._from_row(rows[0]) if rows else None
 
-    async def find_unfinished(self, stale_after: timedelta) -> list[UploadIntent]:
+    async def find_unfinished(
+        self, stale_after: timedelta, kind: IntentKind | None = None
+    ) -> list[ProcessingIntent]:
         """Intent chưa kết thúc và đã đủ cũ, đầu vào cho job phục hồi."""
         threshold = (utc_now() - stale_after).isoformat()
         rows = await self._call(
             lambda: self._db.query(
-                f"{_SELECT} WHERE state NOT IN (?, ?) AND updated_at <= ? ORDER BY updated_at",
-                (str(IntentState.COMPLETED), str(IntentState.FAILED), threshold),
+                f"{_SELECT} WHERE state NOT IN (?, ?) AND updated_at <= ? "
+                "AND (? IS NULL OR kind = ?) ORDER BY updated_at",
+                (str(IntentState.COMPLETED), str(IntentState.FAILED), threshold, kind, kind),
             )
         )
         return [self._from_row(row) for row in rows]
 
     async def _probe_dependency(self) -> HealthResult:
         """Đọc một dòng đếm, là thao tác chỉ đọc và rẻ."""
-        rows = await self._db.query("SELECT COUNT(*) AS total FROM upload_intent")
+        rows = await self._db.query("SELECT COUNT(*) AS total FROM processing_intent")
         total = rows[0]["total"] if rows else 0
         return self.health_up(f"sqlite ok, intents={total}")
 
-    def _as_row(self, intent: UploadIntent) -> tuple[Any, ...]:
+    def _as_row(self, intent: ProcessingIntent) -> tuple[Any, ...]:
         """Chuyển intent sang tuple tham số cho câu INSERT."""
         return (
             str(intent.request_id),
             str(intent.idempotency_key),
             str(intent.document_id),
-            str(intent.version_id),
-            str(intent.expected_checksum),
+            str(intent.version_id) if intent.version_id else None,
+            str(intent.expected_checksum) if intent.expected_checksum else None,
+            str(intent.kind),
             str(intent.state),
             intent.retry_count,
             intent.created_at.isoformat(),
@@ -137,15 +142,18 @@ class SqliteRegistryIntentStore(IntentStorePort, OutboundAdapter):
             self._codec.dumps(dict(intent.payload)),
         )
 
-    def _from_row(self, row: dict[str, Any]) -> UploadIntent:
+    def _from_row(self, row: dict[str, Any]) -> ProcessingIntent:
         """Dựng lại intent từ một dòng sqlite."""
         payload = {str(key): str(value) for key, value in self._codec.loads(row["payload"]).items()}
-        return UploadIntent(
+        return ProcessingIntent(
             request_id=RequestId(row["request_id"]),
             idempotency_key=IdempotencyKey(row["idempotency_key"]),
             document_id=DocumentId(row["document_id"]),
-            version_id=DocumentVersionId(row["version_id"]),
-            expected_checksum=Checksum.parse(row["expected_checksum"]),
+            version_id=DocumentVersionId(row["version_id"]) if row["version_id"] else None,
+            expected_checksum=(
+                Checksum.parse(row["expected_checksum"]) if row["expected_checksum"] else None
+            ),
+            kind=IntentKind(row["kind"]),
             state=IntentState(row["state"]),
             retry_count=int(row["retry_count"]),
             created_at=datetime.fromisoformat(row["created_at"]),

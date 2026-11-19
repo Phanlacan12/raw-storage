@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 
 from document_service.domain.errors import (
     CatalogBypassError,
+    ChecksumMismatchError,
     ConcurrencyConflictError,
     DependencyUnavailableError,
     DocumentNotFoundError,
@@ -20,6 +21,7 @@ from document_service.domain.errors import (
     InvalidValueError,
     PolicyDeniedError,
     RelationshipRebindError,
+    SchemaNotReadyError,
     ServiceDegradedError,
     StatusTransitionError,
     VersionLabelConflictError,
@@ -30,7 +32,9 @@ STATUS_BY_ERROR: dict[type[DomainError], int] = {
     DocumentNotFoundError: 404,
     PolicyDeniedError: 403,
     CatalogBypassError: 403,
-    DuplicateContentError: 200,
+    ChecksumMismatchError: 409,
+    DuplicateContentError: 409,
+    SchemaNotReadyError: 503,
     VersionLabelConflictError: 409,
     StatusTransitionError: 409,
     RelationshipRebindError: 409,

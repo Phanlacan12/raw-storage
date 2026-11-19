@@ -12,15 +12,17 @@ hết hạn thì service chuyển `NOT_READY` thay vì đoán quyền.
 
 from __future__ import annotations
 
+from asyncio import Lock
 from dataclasses import dataclass
 from datetime import datetime
 
 from document_service.config import SecuritySettings
 from document_service.domain.dto import Decision
-from document_service.domain.errors import DomainError
+from document_service.domain.errors import DocumentNotFoundError, DomainError, PolicyDeniedError
 from document_service.domain.model import AccessPolicy, Principal
 from document_service.domain.port import MetadataCatalogPort, PolicyDecisionPort
-from document_service.domain.value import Action, DocumentId
+from document_service.domain.value import Action, DocumentId, DocumentVersionId, StorageUri
+from document_service.infrastructure.health import DependencyKind, HealthProbeMixin, HealthResult
 from document_service.utils.clock import Clock, SystemClock
 
 _READ_ACTIONS = frozenset({Action.VIEW_METADATA, Action.SEARCH, Action.DOWNLOAD})
@@ -35,9 +37,10 @@ class CachedPolicy:
 
     policy: AccessPolicy
     fetched_at: datetime
+    versions: dict[DocumentVersionId, StorageUri]
 
 
-class CachingPolicyDecision(PolicyDecisionPort):
+class CachingPolicyDecision(PolicyDecisionPort, HealthProbeMixin):
     """Quyết định quyền theo nhóm của chủ thể và policy của tài liệu."""
 
     def __init__(
@@ -47,10 +50,26 @@ class CachingPolicyDecision(PolicyDecisionPort):
         clock: Clock | None = None,
     ) -> None:
         """Nhận catalog để đọc policy, cấu hình bảo mật và nguồn thời gian."""
+        HealthProbeMixin.__init__(self)
         self._catalog = catalog
         self._settings = settings
         self._clock = clock or SystemClock()
+        self._refresh_lock = Lock()
         self._cache: dict[str, CachedPolicy] = {}
+
+    @property
+    def dependency_name(self) -> str:
+        """Tên indicator policy."""
+        return "policies"
+
+    @property
+    def dependency_kind(self) -> DependencyKind:
+        """Cache policy được giữ trong tiến trình, catalog có probe riêng."""
+        return DependencyKind.REQUIRED_FOR_READ
+
+    async def _probe_dependency(self) -> HealthResult:
+        """Số policy đang được giữ trong cache cục bộ."""
+        return self.health_up(f"cached documents={len(self._cache)}")
 
     async def decide(self, principal: Principal, action: Action, resource: str) -> Decision:
         """Cho phép hay từ chối một hành động trên một tài nguyên."""
@@ -84,38 +103,84 @@ class CachingPolicyDecision(PolicyDecisionPort):
         cached = self._cache.get(key)
         if cached is not None and self._fresh(cached):
             return cached.policy
-        try:
-            document = await self._catalog.read_document(document_id)
-            policy = document.access_policy
-        except DomainError:
-            policy = AccessPolicy()
-        self._cache[key] = CachedPolicy(policy=policy, fetched_at=self._clock.now())
-        return policy
+        return await self._load_policy(document_id)
 
-    def invalidate(self, document_id: DocumentId | None = None) -> None:
+    async def _load_policy(self, document_id: DocumentId) -> AccessPolicy:
+        """Đọc quyền hiện hành để cấp lượt tải mới kể cả khi một instance khác vừa thu hồi quyền."""
+        async with self._refresh_lock:
+            try:
+                document = await self._catalog.read_document(document_id)
+                policy = document.access_policy
+            except (DocumentNotFoundError, PolicyDeniedError):
+                self._cache.pop(str(document_id), None)
+                return AccessPolicy()
+            except DomainError:
+                return AccessPolicy()
+            self._cache[str(document_id)] = CachedPolicy(
+                policy=policy,
+                fetched_at=self._clock.now(),
+                versions={v.version_id: v.storage_uri for v in document.versions},
+            )
+            return policy
+
+    def has_cached_download(self) -> bool:
+        """Có tài liệu thường còn policy và URI phiên bản trong TTL."""
+        return any(
+            item.versions and not item.policy.require_proxy_download and self._remaining(item) > 0
+            for item in self._cache.values()
+        )
+
+    def cached_download(
+        self, principal: Principal, document_id: DocumentId, version_id: DocumentVersionId
+    ) -> tuple[StorageUri, int] | None:
+        """Cấp link khi mất catalog chỉ cho tài liệu đã được cache và còn quyền tải."""
+        cached = self._cache.get(str(document_id))
+        if cached is None or cached.policy.require_proxy_download:
+            return None
+        remaining = self._remaining(cached)
+        uri = cached.versions.get(version_id)
+        allowed = (
+            self._settings.auth_disabled
+            or self._is_admin(principal)
+            or cached.policy.permits(principal, Action.DOWNLOAD)
+        )
+        if uri is None or remaining <= 0 or not allowed:
+            return None
+        return uri, remaining
+
+    def _remaining(self, cached: CachedPolicy) -> int:
+        """Số giây nguyên còn dùng được để ký URL."""
+        age = (self._clock.now() - cached.fetched_at).total_seconds()
+        return int(self._settings.policy_cache_ttl_seconds - age)
+
+    async def invalidate(self, document_id: DocumentId | None = None) -> None:
         """Bỏ cache policy sau khi thay đổi quyền, hoặc toàn bộ khi cần."""
-        if document_id is None:
-            self._cache.clear()
-        else:
-            self._cache.pop(str(document_id), None)
+        async with self._refresh_lock:
+            if document_id is None:
+                self._cache.clear()
+            else:
+                self._cache.pop(str(document_id), None)
 
     async def _decide_read(self, principal: Principal, action: Action, resource: str) -> Decision:
         """Hành động đọc: tra policy của tài liệu nếu tài nguyên là document_id."""
         if action is Action.SEARCH:
             return Decision.allow()
-        policy = await self._policy_for_resource(resource)
+        policy = await self._policy_for_resource(resource, action)
         if policy is None:
             return Decision.deny("cannot determine which document to authorize against")
         if policy.permits(principal, action):
             return Decision.allow()
         return Decision.deny(f"policy {policy.classification} does not allow {action}")
 
-    async def _policy_for_resource(self, resource: str) -> AccessPolicy | None:
+    async def _policy_for_resource(self, resource: str, action: Action) -> AccessPolicy | None:
         """Policy của tài nguyên, None nếu tài nguyên không phải định danh tài liệu."""
         if not resource or resource in ("search", "document", "version"):
             return None
         try:
-            return await self.effective_policy(DocumentId(resource))
+            document_id = DocumentId(resource)
+            if action is Action.DOWNLOAD:
+                return await self._load_policy(document_id)
+            return await self.effective_policy(document_id)
         except DomainError:
             return None
 

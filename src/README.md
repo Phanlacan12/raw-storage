@@ -33,16 +33,18 @@ Thành phần D1–D18 theo [c4-03](../docs/c4-03-component-document-service.md)
 | D6 | Version Manager | `domain/policy.py` (`VersionPolicy`) |
 | D7 | Lifecycle Manager | `domain/policy.py` (`LifecyclePolicy`) + `application/usecase/approve_version.py` |
 | D8 | Relationship Manager | `domain/policy.py` (`RelationshipPolicy`) + `application/usecase/relationships.py` |
-| D9 | Access Policy Manager | `application/usecase/search_documents.py` (`UpdateAccessPolicyUseCase`) + D3 |
+| D9 | Access Policy Manager | `application/usecase/access_policy.py` (`UpdateAccessPolicyUseCase`) + D3 |
 | D10 | Download Issuer | `adapter/outbound/storage/download.py` (`PresignedUrlIssuer`, `ProxyStreamer`) + `application/usecase/issue_download.py` |
-| D11 | Intent & Idempotency | `application/orchestration/idempotency.py`, `upload_saga.py`, `snapshot.py` |
+| D11 | Intent & Idempotency | `application/orchestration/idempotency.py`, `upload_saga.py`, `snapshot.py`, `lock_manager.py` |
 | D12 | Catalog Adapter | `adapter/outbound/openmetadata/` (`client`, `entity`, `search`, `lineage`, `bootstrap`, `catalog_adapter`) |
 | D13 | Storage Adapter | `adapter/outbound/storage/s3_store.py` |
-| D14 | Event Publisher | `adapter/outbound/observability/audit_log.py` (`OutboxEventPublisher`) |
+| D14 | Outbox Writer | `adapter/outbound/observability/outbox_publisher.py` (`OutboxEventPublisher`) + `outbox_store.py` (`SqliteOutbox`, `OutboxRecord`); phát đi ở `outbox_dispatcher.py` (`OutboxDispatcher`, `WebhookEventSender`) |
 | D15 | Reconciliation Worker | `worker/reconcile.py` |
-| D16 | Audit Logger | `adapter/outbound/observability/audit_log.py` (`StructuredAuditLogger`) |
+| D16 | Audit Logger | `adapter/outbound/observability/audit_log.py` (`StructuredAuditLogger`) + `application/usecase/audit.py` (`ListAuditUseCase`) |
 | D17 | Sync Orchestrator | `adapter/inbound/sync/source_sync.py` (`SourceSyncJob`, `FileSystemSourceConnector`, `SourcePermissionMapper`, `SourceSyncScheduler`) |
-| D18 | Search Query Service | `application/usecase/search_documents.py` + `adapter/outbound/openmetadata/search.py` |
+| D18 | Search Query Service | `application/usecase/search_documents.py` (`SearchDocumentsUseCase`) + `adapter/outbound/openmetadata/search.py` |
+
+Bảng đầy đủ D1–D27, kèm cột lớp và cột bất biến, nằm ở [docs/c4-09-lld.md](../docs/c4-09-lld.md) mục 2.2; bảng trên đây chỉ là bản rút gọn.
 
 Dựng use case: `application/factory.py` (`UseCaseFactory`), lấy qua `container.use_cases`.
 

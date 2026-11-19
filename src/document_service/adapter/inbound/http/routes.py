@@ -18,12 +18,12 @@ from document_service.adapter.inbound.http.context import (
     UploadContext,
     WriteContext,
     get_request_context,
-    get_search_params,
     get_upload_context,
     get_write_context,
 )
 from document_service.adapter.inbound.http.dependencies import (
     require_download_mode,
+    require_read_mode,
     require_write_mode,
 )
 from document_service.adapter.inbound.http.schemas import (
@@ -33,12 +33,15 @@ from document_service.adapter.inbound.http.schemas import (
     DeclareRelationshipRequest,
     DocumentResponse,
     DownloadResponse,
+    PageResponse,
     RelationshipResponse,
     SearchResponse,
     TransitionStatusRequest,
     VersionResponse,
 )
+from document_service.application.usecase.access_policy import UpdateAccessPolicyCommand
 from document_service.application.usecase.approve_version import TransitionStatusCommand
+from document_service.application.usecase.audit import ListAuditCommand
 from document_service.application.usecase.create_version import (
     CreateVersionCommand,
     CreateVersionResult,
@@ -49,13 +52,10 @@ from document_service.application.usecase.relationships import (
     DeclareRelationshipCommand,
     QueryRelationshipsCommand,
 )
-from document_service.application.usecase.search_documents import (
-    ListAuditCommand,
-    SearchCommand,
-    UpdateAccessPolicyCommand,
-)
+from document_service.application.usecase.search_documents import SearchCommand
+from document_service.domain.dto import PageRequest
 from document_service.domain.errors import PolicyDeniedError
-from document_service.domain.model import DocumentMetadata
+from document_service.domain.model import Document, DocumentMetadata
 from document_service.domain.value import (
     Action,
     Direction,
@@ -64,13 +64,14 @@ from document_service.domain.value import (
     DocumentVersionId,
     RelationType,
 )
+from document_service.infrastructure.health import ServiceMode
 
 router = APIRouter()
 
 ReadCtx = Annotated[RequestContext, Depends(get_request_context)]
 WriteCtx = Annotated[WriteContext, Depends(get_write_context)]
 UploadCtx = Annotated[UploadContext, Depends(get_upload_context)]
-SearchCtx = Annotated[SearchParams, Depends(get_search_params)]
+SearchCtx = Annotated[SearchParams, Query()]
 WRITE_GATE = Depends(require_write_mode)
 DOWNLOAD_GATE = Depends(require_download_mode)
 
@@ -83,6 +84,7 @@ async def create_document(
 ) -> DocumentResponse:
     """Đăng ký một tài liệu logic mới."""
     command = RegisterDocumentCommand(
+        idempotency_key=ctx.idempotency_key,
         principal=ctx.principal,
         metadata=DocumentMetadata(
             title=payload.title,
@@ -102,17 +104,51 @@ async def create_document(
     return DocumentResponse.from_domain(document)
 
 
-@router.get("/documents/{document_id}", response_model=DocumentResponse)
+def get_page(
+    page_size: int = Query(50, ge=1, le=200), cursor: str | None = Query(None)
+) -> PageRequest:
+    """Đọc và giới hạn kích thước trang."""
+    return PageRequest(page_size, cursor)
+
+
+PageCtx = Annotated[PageRequest, Depends(get_page)]
+
+
+@router.get(
+    "/documents/{document_id}/versions",
+    dependencies=[Depends(require_read_mode)],
+    response_model=PageResponse[VersionResponse],
+)
+async def list_versions(
+    document_id: str, ctx: ReadCtx, page: PageCtx
+) -> PageResponse[VersionResponse]:
+    """Liệt kê phiên bản kể cả Obsolete sau khi kiểm tra quyền metadata."""
+    document = await _visible_document(document_id, ctx)
+    versions = page.slice(sorted(document.versions, key=lambda version: str(version.version_id)))
+    return PageResponse(
+        items=[VersionResponse.from_domain(v) for v in versions.items],
+        next_cursor=versions.next_cursor,
+    )
+
+
+@router.get(
+    "/documents/{document_id}",
+    dependencies=[Depends(require_read_mode)],
+    response_model=DocumentResponse,
+)
 async def read_document(document_id: str, ctx: ReadCtx) -> DocumentResponse:
     """Đọc thông tin tài liệu và số phiên bản."""
+    return DocumentResponse.from_domain(await _visible_document(document_id, ctx))
+
+
+async def _visible_document(document_id: str, ctx: ReadCtx) -> Document:
     identifier = DocumentId(document_id)
     decision = await ctx.container.ports.policies.decide(
         ctx.principal, Action.VIEW_METADATA, str(identifier)
     )
     if not decision.allowed:
         raise PolicyDeniedError(decision.reason or "not allowed to view the document")
-    document = await ctx.container.ports.catalog.read_document(identifier)
-    return DocumentResponse.from_domain(document)
+    return await ctx.container.ports.catalog.read_document(identifier)
 
 
 @router.post("/documents/{document_id}/versions", response_model=VersionResponse, status_code=201)
@@ -147,7 +183,7 @@ async def create_version(
 async def transition_status(
     version_id: str,
     payload: TransitionStatusRequest,
-    ctx: ReadCtx,
+    ctx: WriteCtx,
     document_id: str = Query(...),
     _: None = WRITE_GATE,
 ) -> VersionResponse:
@@ -156,10 +192,11 @@ async def transition_status(
         document_id=DocumentId(document_id),
         version_id=DocumentVersionId(version_id),
         target_status=DocumentStatus(payload.status),
+        idempotency_key=ctx.idempotency_key,
         principal=ctx.principal,
     )
     result = await ctx.container.use_cases.approve_version().execute(command)
-    return VersionResponse.from_domain(result.approved)
+    return VersionResponse.from_domain(result.changed)
 
 
 @router.post("/relationships", response_model=RelationshipResponse, status_code=201)
@@ -170,22 +207,28 @@ async def declare_relationship(
 ) -> RelationshipResponse:
     """Khai báo quan hệ giữa hai phiên bản."""
     command = DeclareRelationshipCommand(
+        idempotency_key=ctx.idempotency_key,
         relation_type=RelationType(payload.relation_type),
         source_version_id=DocumentVersionId(payload.source_version_id),
         target_version_id=DocumentVersionId(payload.target_version_id),
         principal=ctx.principal,
     )
     relationship = await ctx.container.use_cases.declare_relationship().execute(command)
-    return RelationshipResponse.from_domain(relationship)
+    return RelationshipResponse.from_domain(relationship, Direction.OUTGOING)
 
 
-@router.get("/versions/{version_id}/relationships", response_model=list[RelationshipResponse])
+@router.get(
+    "/versions/{version_id}/relationships",
+    dependencies=[Depends(require_read_mode)],
+    response_model=PageResponse[RelationshipResponse],
+)
 async def query_relationships(
     version_id: str,
     ctx: ReadCtx,
+    page: PageCtx,
     direction: Direction = Query(default=Direction.BOTH),
     relation_type: RelationType | None = Query(default=None),
-) -> list[RelationshipResponse]:
+) -> PageResponse[RelationshipResponse]:
     """Truy vấn quan hệ hai chiều theo loại quan hệ."""
     command = QueryRelationshipsCommand(
         version_id=DocumentVersionId(version_id),
@@ -193,8 +236,14 @@ async def query_relationships(
         direction=direction,
         relation_type=relation_type,
     )
-    items = await ctx.container.use_cases.query_relationships().execute(command)
-    return [RelationshipResponse.from_domain(item) for item in items]
+    edges = await ctx.container.use_cases.query_relationships().page(command, page)
+    return PageResponse(
+        items=[
+            RelationshipResponse.from_domain(edge.relationship, edge.direction)
+            for edge in edges.items
+        ],
+        next_cursor=edges.next_cursor,
+    )
 
 
 @router.get("/versions/{version_id}/download", response_model=DownloadResponse)
@@ -209,6 +258,7 @@ async def download_version(
         document_id=DocumentId(document_id),
         version_id=DocumentVersionId(version_id),
         principal=ctx.principal,
+        cached_only=ctx.container.gate.mode is ServiceMode.DOWNLOAD_ONLY,
     )
     grant = await ctx.container.use_cases.issue_download().execute(command)
     if not grant.proxied:
@@ -222,7 +272,7 @@ async def download_version(
     )
 
 
-@router.get("/search", response_model=SearchResponse)
+@router.get("/search", dependencies=[Depends(require_read_mode)], response_model=SearchResponse)
 async def search_documents(ctx: ReadCtx, params: SearchCtx) -> SearchResponse:
     """Tìm kiếm theo metadata với lọc tổ hợp và phân trang."""
     page = await ctx.container.use_cases.search_documents().execute(
@@ -240,6 +290,7 @@ async def update_access_policy(
 ) -> AccessPolicyPayload:
     """Cập nhật chính sách truy cập của tài liệu."""
     command = UpdateAccessPolicyCommand(
+        idempotency_key=ctx.idempotency_key,
         document_id=DocumentId(document_id),
         principal=ctx.principal,
         access_policy=payload.to_domain(),
@@ -248,9 +299,20 @@ async def update_access_policy(
     return AccessPolicyPayload.from_domain(policy)
 
 
-@router.get("/documents/{document_id}/audit", response_model=list[AuditEventResponse])
-async def list_audit(document_id: str, ctx: ReadCtx) -> list[AuditEventResponse]:
+@router.get(
+    "/documents/{document_id}/audit",
+    dependencies=[Depends(require_read_mode)],
+    response_model=PageResponse[AuditEventResponse],
+)
+async def list_audit(
+    document_id: str, ctx: ReadCtx, page: PageCtx
+) -> PageResponse[AuditEventResponse]:
     """Đọc lịch sử audit của một tài liệu."""
-    command = ListAuditCommand(document_id=DocumentId(document_id), principal=ctx.principal)
+    command = ListAuditCommand(
+        document_id=DocumentId(document_id), principal=ctx.principal, page=page
+    )
     events = await ctx.container.use_cases.list_audit().execute(command)
-    return [AuditEventResponse.from_domain(event) for event in events]
+    return PageResponse(
+        items=[AuditEventResponse.from_domain(event) for event in events.items],
+        next_cursor=events.next_cursor,
+    )

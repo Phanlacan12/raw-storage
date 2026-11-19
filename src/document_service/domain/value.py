@@ -41,6 +41,14 @@ class Direction(StrEnum):
     BOTH = "both"
 
 
+class IntentKind(StrEnum):
+    """Loại thao tác cần phục hồi."""
+
+    UPLOAD = "upload"
+    STATUS_CHANGE = "status_change"
+    COMMAND = "command"
+
+
 class IntentState(StrEnum):
     """Chuỗi trạng thái của một upload intent, mục 3.5 báo cáo."""
 

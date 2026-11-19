@@ -13,6 +13,7 @@ from document_service.adapter.inbound.health.indicators import (
     ReconcileBacklogIndicator,
 )
 from document_service.adapter.inbound.health.registry import DegradedModeGate, HealthCheckRegistry
+from document_service.adapter.inbound.security.auth import PrincipalResolver
 from document_service.adapter.inbound.sync.source_sync import SourceSyncJob, SourceSyncScheduler
 from document_service.adapter.outbound.fake.in_memory import (
     AllowAllPolicyDecision,
@@ -28,12 +29,12 @@ from document_service.adapter.outbound.intent.s3_manifest_store import S3Manifes
 from document_service.adapter.outbound.intent.sqlite_store import SqliteRegistryIntentStore
 from document_service.adapter.outbound.observability.audit_log import StructuredAuditLogger
 from document_service.adapter.outbound.observability.metrics import MetricsRecorder
-from document_service.adapter.outbound.observability.outbox import (
+from document_service.adapter.outbound.observability.outbox_dispatcher import (
     OutboxDispatcher,
-    OutboxEventPublisher,
-    SqliteOutbox,
     WebhookEventSender,
 )
+from document_service.adapter.outbound.observability.outbox_publisher import OutboxEventPublisher
+from document_service.adapter.outbound.observability.outbox_store import SqliteOutbox
 from document_service.adapter.outbound.openmetadata.catalog_adapter import (
     OpenMetadataCatalogAdapter,
 )
@@ -48,7 +49,6 @@ from document_service.adapter.outbound.storage.download import PresignedUrlIssue
 from document_service.adapter.outbound.storage.s3_store import S3ObjectStoreAdapter
 from document_service.application.context import PolicySet, PortBundle
 from document_service.application.factory import UseCaseFactory
-from document_service.application.metadata_builder import CatalogMetadataBuilder
 from document_service.config import (
     AdapterProfile,
     IntentStoreKind,
@@ -56,13 +56,14 @@ from document_service.config import (
     Settings,
     get_settings,
 )
+from document_service.domain.metadata_builder import CatalogMetadataBuilder
 from document_service.domain.policy import (
     DedupPolicy,
     LifecyclePolicy,
     RelationshipPolicy,
     VersionPolicy,
 )
-from document_service.infrastructure.health import HealthProbe
+from document_service.infrastructure.health import HealthProbeMixin
 from document_service.infrastructure.resilience.executor import (
     ExecutorRegistry,
     ResilientCallExecutor,
@@ -90,8 +91,10 @@ class ServiceContainer(metaclass=SingletonMeta):
             self._policies,
             self._settings.storage.presign_ttl_seconds,
             self._builder,
+            self._settings.catalog.require_existing_collection,
         )
-        self._health = HealthCheckRegistry()
+        self._resolver = PrincipalResolver(self._settings.security)
+        self._health = HealthCheckRegistry(self._ports.policies.has_cached_download)
         self._gate = DegradedModeGate()
         self._metrics = MetricsRecorder()
         self._register_health()
@@ -100,6 +103,11 @@ class ServiceContainer(metaclass=SingletonMeta):
     def settings(self) -> Settings:
         """Cấu hình đang dùng."""
         return self._settings
+
+    @property
+    def resolver(self) -> PrincipalResolver:
+        """Bộ xác thực dùng chung cho request và health IdP."""
+        return self._resolver
 
     @property
     def ports(self) -> PortBundle:
@@ -184,6 +192,8 @@ class ServiceContainer(metaclass=SingletonMeta):
         self._executors.register("relationship_store", resilience.relationship)
         self._executors.register("idp", resilience.idp)
         self._executors.register("events", resilience.events)
+        self._executors.register("outbox", resilience.intent)
+        self._executors.register("audit", resilience.intent)
 
     def _build_ports(self) -> PortBundle:
         """Chọn bộ adapter theo profile."""
@@ -199,7 +209,7 @@ class ServiceContainer(metaclass=SingletonMeta):
             relationships=InMemoryRelationshipStore(),
             objects=InMemoryObjectStore(),
             intents=InMemoryIntentStore(),
-            policies=AllowAllPolicyDecision(),
+            policies=AllowAllPolicyDecision(catalog),
             events=InMemoryEventPublisher(),
             audit=InMemoryAuditLog(),
             locks=InMemoryDocumentLock(),
@@ -234,10 +244,8 @@ class ServiceContainer(metaclass=SingletonMeta):
             objects=objects,
             intents=intents,
             policies=CachingPolicyDecision(catalog, self._settings.security),
-            events=OutboxEventPublisher(
-                SqliteOutbox(database), self._executors.get("intent_store")
-            ),
-            audit=StructuredAuditLogger(database, self._executors.get("intent_store")),
+            events=OutboxEventPublisher(SqliteOutbox(database), self._executors.get("outbox")),
+            audit=StructuredAuditLogger(database, self._executors.get("audit")),
             locks=InMemoryDocumentLock(),
         )
 
@@ -259,10 +267,14 @@ class ServiceContainer(metaclass=SingletonMeta):
             self._ports.intents,
             self._ports.relationships,
             self._ports.locks,
+            self._ports.audit,
+            self._ports.events,
+            self._ports.policies,
         ):
-            if isinstance(candidate, HealthProbe):
+            if isinstance(candidate, HealthProbeMixin):
+                candidate.set_health_cache_ttl(self._settings.health.cache_ttl_seconds)
                 self._health.register(AdapterHealthIndicator(candidate))
-        self._health.register(IdpHealthIndicator(jwks_available=True))
+        self._health.register(IdpHealthIndicator(self._resolver.verifier.probe_jwks))
         self._health.register(
             ReconcileBacklogIndicator(
                 self._ports.intents,

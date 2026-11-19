@@ -7,6 +7,7 @@ test), chủ thể được đọc từ header để kịch bản curl chạy đ
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import httpx
@@ -31,12 +32,31 @@ class OidcTokenVerifier:
         """Nhận cấu hình OIDC."""
         self._settings = settings
         self._jwk_client: PyJWKClient | None = None
-        self._jwks_available = not settings.oidc_jwks_url
+        self._jwks_available = settings.auth_disabled
 
     @property
     def jwks_available(self) -> bool:
         """JWKS còn dùng được hay không, health indicator đọc giá trị này."""
         return self._jwks_available
+
+    async def probe_jwks(self) -> bool:
+        """Nạp khóa lúc khởi động và kiểm cả hạn cache khi chưa có request."""
+        if self._settings.auth_disabled:
+            return True
+        if not self._settings.oidc_jwks_url:
+            return False
+        try:
+            await asyncio.to_thread(self._client().get_signing_keys)
+            self._jwks_available = True
+        except jwt.PyJWKClientError:
+            self._jwks_available = False
+        return self.jwks_available
+
+    def _client(self) -> PyJWKClient:
+        """Một cache khóa dùng chung cho probe và xác thực token."""
+        if self._jwk_client is None:
+            self._jwk_client = PyJWKClient(self._settings.oidc_jwks_url)
+        return self._jwk_client
 
     def verify(self, token: str) -> dict[str, Any]:
         """Giải mã và kiểm tra token, phát PolicyDeniedError nếu không hợp lệ."""
@@ -52,7 +72,6 @@ class OidcTokenVerifier:
                 )
             )
         except (jwt.PyJWTError, httpx.HTTPError) as error:
-            self._jwks_available = False
             _LOGGER.warning("token verification failed", extra={"error": str(error)})
             raise PolicyDeniedError("invalid token") from error
 
@@ -60,9 +79,11 @@ class OidcTokenVerifier:
         """Lấy khóa công khai tương ứng token."""
         if not self._settings.oidc_jwks_url:
             raise PolicyDeniedError("JWKS is not configured for the IdP")
-        if self._jwk_client is None:
-            self._jwk_client = PyJWKClient(self._settings.oidc_jwks_url)
-        key = self._jwk_client.get_signing_key_from_jwt(token).key
+        try:
+            key = self._client().get_signing_key_from_jwt(token).key
+        except jwt.PyJWKClientConnectionError:
+            self._jwks_available = False
+            raise
         self._jwks_available = True
         return key
 

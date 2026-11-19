@@ -10,19 +10,23 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from document_service.application.context import PolicySet, PortBundle
-from document_service.application.metadata_builder import CatalogMetadataBuilder
 from document_service.application.orchestration.idempotency import IdempotencyGuard
 from document_service.application.orchestration.snapshot import VersionSnapshot
 from document_service.application.orchestration.upload_saga import StreamFactory, UploadSaga
 from document_service.application.usecase.base import AuditOutcome, AuditTarget, WriteUseCase
 from document_service.domain.dto import UploadRequest
-from document_service.domain.errors import DependencyUnavailableError
+from document_service.domain.errors import (
+    ConcurrencyConflictError,
+    DependencyUnavailableError,
+    PolicyDeniedError,
+)
+from document_service.domain.metadata_builder import CatalogMetadataBuilder
 from document_service.domain.model import (
     Document,
     DocumentVersion,
     DomainEvent,
     Principal,
-    UploadIntent,
+    ProcessingIntent,
 )
 from document_service.domain.value import RequestId
 from document_service.utils.ids import IdGenerator, UlidGenerator
@@ -71,11 +75,24 @@ class CreateVersionUseCase(WriteUseCase[CreateVersionCommand, CreateVersionResul
 
     async def execute(self, command: CreateVersionCommand) -> CreateVersionResult:
         """Thực hiện toàn bộ luồng tạo phiên bản."""
+        try:
+            await self._authorize_write(command.principal, str(command.request.document_id))
+        except PolicyDeniedError as error:
+            await self._record(
+                command.principal,
+                "version.create",
+                AuditTarget.of_document(command.request.document_id),
+                AuditOutcome.denied(str(error)),
+            )
+            raise
         replay = await self._guard.inspect(command.request.idempotency_key)
         if replay.is_replay and replay.intent is not None:
+            if replay.intent.document_id != command.request.document_id:
+                raise ConcurrencyConflictError("upload key belongs to a different document")
             version = self._snapshot.from_payload(replay.intent.payload)
+            if version.created_by != command.principal.principal_id:
+                raise ConcurrencyConflictError("upload key belongs to a different principal")
             return CreateVersionResult(version=version, created=False, replayed=True)
-        await self._authorize_write(command.principal, "version")
         document_id = command.request.document_id
         return await self._run_exclusive(document_id, lambda: self._create(command))
 
@@ -100,9 +117,9 @@ class CreateVersionUseCase(WriteUseCase[CreateVersionCommand, CreateVersionResul
         await self._publish_created(command.principal, version)
         return CreateVersionResult(version=version, created=True)
 
-    def _new_intent(self, request: UploadRequest, version: DocumentVersion) -> UploadIntent:
+    def _new_intent(self, request: UploadRequest, version: DocumentVersion) -> ProcessingIntent:
         """Dựng intent bền vững kèm snapshot phiên bản."""
-        return UploadIntent(
+        return ProcessingIntent(
             request_id=RequestId(self._ids.new_id(prefix="REQ")),
             idempotency_key=request.idempotency_key,
             document_id=request.document_id,
@@ -113,7 +130,7 @@ class CreateVersionUseCase(WriteUseCase[CreateVersionCommand, CreateVersionResul
 
     async def _run_saga(
         self,
-        intent: UploadIntent,
+        intent: ProcessingIntent,
         document: Document,
         version: DocumentVersion,
         stream_factory: StreamFactory,

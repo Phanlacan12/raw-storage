@@ -22,6 +22,8 @@ FILTERABLE_FIELDS: tuple[str, ...] = (
     CLASSIFICATION,
     COLLECTION_ID,
     VERSION_LABEL,
+    "owner",
+    "title",
 )
 
 DESCRIPTIVE_FIELDS: tuple[str, ...] = (
@@ -44,6 +46,10 @@ VERSION_FIELDS: tuple[str, ...] = DESCRIPTIVE_FIELDS + (
     DOCUMENT_ID,
     DOCUMENT_VERSION_ID,
     "original_file_name",
+    "approved_at",
+    "approved_by",
+    "obsoleted_at",
+    "obsoleted_by",
     VERSION_LABEL,
     STATUS,
     CLASSIFICATION,
@@ -54,10 +60,13 @@ VERSION_FIELDS: tuple[str, ...] = DESCRIPTIVE_FIELDS + (
 )
 
 DOCUMENT_FIELDS: tuple[str, ...] = DESCRIPTIVE_FIELDS + (
+    "collection_type",
+    "parent_collection_id",
     DOCUMENT_ID,
     CLASSIFICATION,
     "retention_policy",
     "current_version_id",
+    "access_policy",
 )
 
 # `size` là số byte, gửi dạng int. Các trường còn lại là chuỗi (list được

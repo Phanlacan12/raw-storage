@@ -18,10 +18,14 @@ from document_service.domain.dto import (
     Decision,
     EntityRef,
     ObjectInfo,
+    Page,
+    PageRequest,
     PutResult,
+    RelatedEdge,
     SearchPage,
     SearchQuery,
 )
+from document_service.domain.errors import PolicyDeniedError
 from document_service.domain.model import (
     AccessPolicy,
     AuditEvent,
@@ -30,8 +34,8 @@ from document_service.domain.model import (
     DocumentVersion,
     DomainEvent,
     Principal,
+    ProcessingIntent,
     Relationship,
-    UploadIntent,
 )
 from document_service.domain.value import (
     Action,
@@ -40,6 +44,7 @@ from document_service.domain.value import (
     DocumentId,
     DocumentVersionId,
     IdempotencyKey,
+    IntentKind,
     IntentState,
     RelationType,
     RequestId,
@@ -55,6 +60,10 @@ class MetadataCatalogPort(ABC):
     @abstractmethod
     async def ensure_collection(self, collection: Collection) -> EntityRef:
         """Bảo đảm collection đã tồn tại trong catalog."""
+
+    @abstractmethod
+    async def find_collection(self, collection_id: str) -> Collection | None:
+        """Đọc thông tin collection nếu đã khai báo."""
 
     @abstractmethod
     async def register_document(self, document: Document) -> EntityRef:
@@ -107,8 +116,27 @@ class RelationshipStorePort(ABC):
         version_id: DocumentVersionId,
         direction: Direction = Direction.BOTH,
         relation_type: RelationType | None = None,
-    ) -> list[Relationship]:
+    ) -> list[RelatedEdge]:
         """Truy vấn quan hệ theo chiều và loại quan hệ."""
+
+    async def query_page(
+        self,
+        version_id: DocumentVersionId,
+        direction: Direction,
+        relation_type: RelationType | None,
+        page: PageRequest,
+    ) -> Page[RelatedEdge]:
+        """Phân trang kết quả backbone không hỗ trợ cursor từ server."""
+        items = await self.query(version_id, direction, relation_type)
+        items.sort(
+            key=lambda edge: (
+                str(edge.relationship.source_version_id),
+                str(edge.relationship.target_version_id),
+                str(edge.relationship.relation_type),
+                str(edge.direction),
+            )
+        )
+        return page.slice(items)
 
     @abstractmethod
     async def remove(self, relationship: Relationship) -> None:
@@ -155,7 +183,7 @@ class IntentStorePort(ABC):
     """Lưu trạng thái xử lý bền vững (mục 3.5 báo cáo, bất biến I13)."""
 
     @abstractmethod
-    async def create(self, intent: UploadIntent) -> None:
+    async def create(self, intent: ProcessingIntent) -> None:
         """Ghi intent mới trước khi ghi object."""
 
     @abstractmethod
@@ -163,19 +191,21 @@ class IntentStorePort(ABC):
         """Cập nhật trạng thái của intent."""
 
     @abstractmethod
-    async def save(self, intent: UploadIntent) -> None:
+    async def save(self, intent: ProcessingIntent) -> None:
         """Ghi lại toàn bộ intent, dùng khi tăng retry_count hoặc ghi lỗi."""
 
     @abstractmethod
-    async def find_by_idempotency_key(self, key: IdempotencyKey) -> UploadIntent | None:
+    async def find_by_idempotency_key(self, key: IdempotencyKey) -> ProcessingIntent | None:
         """Tìm intent theo idempotency key để không tạo phiên bản trùng."""
 
     @abstractmethod
-    async def find_by_request_id(self, request_id: RequestId) -> UploadIntent | None:
+    async def find_by_request_id(self, request_id: RequestId) -> ProcessingIntent | None:
         """Tìm intent theo request id."""
 
     @abstractmethod
-    async def find_unfinished(self, stale_after: timedelta) -> list[UploadIntent]:
+    async def find_unfinished(
+        self, stale_after: timedelta, kind: IntentKind | None = None
+    ) -> list[ProcessingIntent]:
         """Danh sách intent chưa hoàn tất, đầu vào cho job phục hồi."""
 
 
@@ -186,9 +216,25 @@ class PolicyDecisionPort(ABC):
     async def decide(self, principal: Principal, action: Action, resource: str) -> Decision:
         """Cho phép hay từ chối một hành động trên một tài nguyên."""
 
+    def has_cached_download(self) -> bool:
+        """Có ít nhất một phiên bản còn đủ dữ liệu cấp link khi mất catalog."""
+        return False
+
+    def cached_download(
+        self, principal: Principal, document_id: DocumentId, version_id: DocumentVersionId
+    ) -> tuple[StorageUri, int] | None:
+        """Trả URI và TTL còn lại nếu được cấp link từ cache của đúng tài liệu."""
+        raise PolicyDeniedError(
+            f"no cached download for {principal.principal_id} on {document_id}/{version_id}"
+        )
+
     @abstractmethod
     async def effective_policy(self, document_id: DocumentId) -> AccessPolicy:
         """Policy đang hiệu lực của tài liệu, có thể lấy từ cache."""
+
+    @abstractmethod
+    async def invalidate(self, document_id: DocumentId | None = None) -> None:
+        """Bỏ cache khi chính sách của tài liệu thay đổi."""
 
 
 class EventPublisherPort(ABC):
@@ -209,6 +255,10 @@ class AuditPort(ABC):
     @abstractmethod
     async def list_for_document(self, document_id: DocumentId) -> list[AuditEvent]:
         """Lịch sử audit của một tài liệu, phục vụ POC-14."""
+
+    @abstractmethod
+    async def list_page(self, document_id: DocumentId, page: PageRequest) -> Page[AuditEvent]:
+        """Đọc audit theo khóa của bản ghi cuối trang."""
 
 
 class DocumentLockPort(ABC):

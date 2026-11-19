@@ -309,5 +309,8 @@ class SourceSyncScheduler:
             _LOGGER.info("source sync is disabled in the configuration")
             return
         while True:
-            await self._job.run_once()
+            try:
+                await self._job.run_once()
+            except Exception:
+                _LOGGER.exception("source sync cycle failed")
             await asyncio.sleep(self._settings.interval_seconds)

@@ -31,6 +31,7 @@ from typing import Any
 from document_service.adapter.outbound.base import OutboundAdapter
 from document_service.adapter.outbound.openmetadata import endpoints
 from document_service.adapter.outbound.openmetadata.client import OmHttpClient
+from document_service.domain.dto import RelatedEdge
 from document_service.domain.errors import DocumentNotFoundError
 from document_service.domain.model import Relationship
 from document_service.domain.port import RelationshipStorePort
@@ -127,7 +128,7 @@ class OmLineageRelationshipStore(RelationshipStorePort, OutboundAdapter):
         version_id: DocumentVersionId,
         direction: Direction = Direction.BOTH,
         relation_type: RelationType | None = None,
-    ) -> list[Relationship]:
+    ) -> list[RelatedEdge]:
         """Đọc lineage của một phiên bản rồi lọc theo chiều và loại quan hệ."""
         try:
             _, fqn = await self._index.entity_of(version_id)
@@ -140,7 +141,7 @@ class OmLineageRelationshipStore(RelationshipStorePort, OutboundAdapter):
             endpoints.LINEAGE_GET,
             {"fqn": fqn, "type": _ENTITY_TYPE, "upstreamDepth": 1, "downstreamDepth": 1},
         )
-        result: list[Relationship] = []
+        result: list[RelatedEdge] = []
         for edge in self._edges_of(payload):
             relationship = self._from_edge(edge)
             if relationship is None:
@@ -216,13 +217,13 @@ class OmLineageRelationshipStore(RelationshipStorePort, OutboundAdapter):
         relationship: Relationship,
         version_id: DocumentVersionId,
         direction: Direction,
-    ) -> list[Relationship]:
-        """Giữ lại quan hệ đúng chiều yêu cầu, đảo chiều khi đọc incoming."""
-        matches: list[Relationship] = []
+    ) -> list[RelatedEdge]:
+        """Giữ lại quan hệ đúng chiều yêu cầu, giữ nguyên hai đầu cạnh."""
+        matches: list[RelatedEdge] = []
         if direction in (Direction.OUTGOING, Direction.BOTH):
             if relationship.source_version_id == version_id:
-                matches.append(relationship)
+                matches.append(RelatedEdge(relationship, Direction.OUTGOING))
         if direction in (Direction.INCOMING, Direction.BOTH):
             if relationship.target_version_id == version_id:
-                matches.append(relationship.reversed_direction())
+                matches.append(RelatedEdge(relationship, Direction.INCOMING))
         return matches

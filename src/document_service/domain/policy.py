@@ -16,7 +16,7 @@ from document_service.domain.errors import (
     RelationshipRebindError,
     StatusTransitionError,
 )
-from document_service.domain.model import ApprovalResult, Document, DocumentVersion, Relationship
+from document_service.domain.model import Document, DocumentVersion, Relationship, TransitionResult
 from document_service.domain.value import (
     Actor,
     Checksum,
@@ -142,7 +142,7 @@ class LifecyclePolicy(DomainPolicy):
 
     def approve(
         self, document: Document, version_id: DocumentVersionId, actor: Actor
-    ) -> ApprovalResult:
+    ) -> TransitionResult:
         """Duyệt một phiên bản và hạ bản trước đó xuống Obsolete."""
         self.assert_at_most_one_approved(document)
         result = document.approve(version_id, actor)
@@ -155,12 +155,12 @@ class LifecyclePolicy(DomainPolicy):
         version_id: DocumentVersionId,
         target: DocumentStatus,
         actor: Actor,
-    ) -> ApprovalResult:
+    ) -> TransitionResult:
         """Chuyển trạng thái một phiên bản theo yêu cầu đã được phân quyền."""
         if target is DocumentStatus.APPROVED:
             return self.approve(document, version_id, actor)
         if target is DocumentStatus.OBSOLETE:
-            return ApprovalResult(approved=document.obsolete(version_id, actor))
+            return document.obsolete(version_id, actor)
         raise StatusTransitionError(f"transition to status {target} is not supported")
 
     def current_version_fields(self, document: Document) -> dict[str, str]:

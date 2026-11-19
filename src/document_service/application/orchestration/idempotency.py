@@ -10,16 +10,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from document_service.domain.errors import ConcurrencyConflictError
-from document_service.domain.model import UploadIntent
+from document_service.domain.model import ProcessingIntent
 from document_service.domain.port import IntentStorePort
-from document_service.domain.value import IdempotencyKey, IntentState
+from document_service.domain.value import IdempotencyKey, IntentKind, IntentState
 
 
 @dataclass(frozen=True, slots=True)
 class ReplayDecision:
     """Kết quả tra khóa chống lặp."""
 
-    intent: UploadIntent | None
+    intent: ProcessingIntent | None
     is_replay: bool
 
     @property
@@ -40,10 +40,12 @@ class IdempotencyGuard:
         existing = await self._intents.find_by_idempotency_key(key)
         if existing is None:
             return ReplayDecision(intent=None, is_replay=False)
+        if existing.kind is not IntentKind.UPLOAD:
+            raise ConcurrencyConflictError(f"key {key} belongs to a different operation")
         if existing.state is IntentState.COMPLETED:
             return ReplayDecision(intent=existing, is_replay=True)
         if existing.state is IntentState.FAILED:
-            return ReplayDecision(intent=existing, is_replay=False)
+            raise ConcurrencyConflictError(f"idempotency_key {key} belongs to a failed request")
         raise ConcurrencyConflictError(
             f"idempotency_key {key} is already being processed in state {existing.state}"
         )

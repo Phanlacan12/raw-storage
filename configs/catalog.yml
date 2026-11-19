@@ -9,9 +9,13 @@ catalog:
   root_directory: documents
   # Custom property bắt buộc phải lọc được qua Search API (POC-19).
   # OmSchemaMigration fail fast nếu thiếu hoặc không index được.
+  # Bật sau khi vận hành đã cấp collection (D24).
+  require_existing_collection: false
   required_properties:
     - document_type
     - status
     - classification
     - collection_id
     - version_label
+    - owner
+    - title

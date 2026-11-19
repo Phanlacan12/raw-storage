@@ -40,7 +40,7 @@ class OmSearchQueryBuilder:
             "q": query.text or "*",
             "index": FILE_SEARCH_INDEX,
             "size": query.page_size,
-            "from": int(query.cursor) if query.cursor and query.cursor.isdigit() else 0,
+            "from": query.offset,
         }
         if query.filters:
             params["query_filter"] = self._codec.dumps(self._query_filter(query))
@@ -67,9 +67,9 @@ class OmSearchResultMapper:
         raw_hits = self._raw_hits(payload)
         hits = tuple(self._to_hit(item) for item in raw_hits if self._usable(item))
         total = self._total(payload)
-        offset = int(query.cursor) if query.cursor and query.cursor.isdigit() else 0
-        next_offset = offset + len(hits)
-        next_cursor = str(next_offset) if next_offset < total else None
+        offset = query.offset
+        next_offset = offset + len(raw_hits)
+        next_cursor = str(next_offset) if raw_hits and next_offset < total else None
         return SearchPage(hits=hits, next_cursor=next_cursor, total_hits=total)
 
     def _raw_hits(self, payload: dict[str, Any]) -> list[dict[str, Any]]:

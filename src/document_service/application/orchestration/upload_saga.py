@@ -11,7 +11,8 @@ from typing import Any, AsyncIterator, Callable
 
 from document_service.application.orchestration.snapshot import VersionSnapshot
 from document_service.domain.dto import PutResult
-from document_service.domain.model import DocumentVersion, UploadIntent
+from document_service.domain.errors import ChecksumMismatchError
+from document_service.domain.model import DocumentVersion, ProcessingIntent
 from document_service.domain.port import IntentStorePort, MetadataCatalogPort, ObjectStorePort
 from document_service.domain.value import IntentState
 from document_service.utils.logging_setup import get_logger
@@ -37,7 +38,7 @@ class UploadSaga:
 
     async def run(
         self,
-        intent: UploadIntent,
+        intent: ProcessingIntent,
         version: DocumentVersion,
         metadata: dict[str, Any],
         stream_factory: StreamFactory,
@@ -49,7 +50,7 @@ class UploadSaga:
         intent.advance(IntentState.COMPLETED)
         return result
 
-    async def resume(self, intent: UploadIntent, metadata: dict[str, Any]) -> bool:
+    async def resume(self, intent: ProcessingIntent, metadata: dict[str, Any]) -> bool:
         """Tiếp tục một intent dở dang sau khi service restart.
 
         Không có bytes gốc trong tay, nên saga chỉ phục hồi được khi object đã nằm
@@ -71,31 +72,51 @@ class UploadSaga:
         if info.size_bytes <= 0 and info.etag == "":
             await self._fail(intent, "object does not exist yet, cannot recover")
             return False
-        await self._register_catalog(intent, version, metadata)
+        if (
+            info.checksum != intent.expected_checksum
+            or version.checksum != intent.expected_checksum
+        ):
+            await self._fail(intent, "stored checksum differs from the upload intent")
+            return False
+        versions = await self._catalog.list_versions(intent.document_id)
+        existing = next((item for item in versions if item.version_id == version.version_id), None)
+        if existing is None:
+            await self._register_catalog(intent, version, metadata)
+        elif existing.checksum != version.checksum or existing.storage_uri != version.storage_uri:
+            await self._fail(intent, "catalog version conflicts with the stored upload snapshot")
+            return False
         await self._intents.advance(intent.request_id, IntentState.COMPLETED)
         intent.advance(IntentState.COMPLETED)
         return True
 
     async def _store_object(
-        self, intent: UploadIntent, version: DocumentVersion, stream_factory: StreamFactory
+        self, intent: ProcessingIntent, version: DocumentVersion, stream_factory: StreamFactory
     ) -> PutResult:
         """Ghi object bất biến và chuyển intent sang ObjectStored."""
         result = await self._objects.put_immutable(
             version.storage_uri, stream_factory(), version.checksum
         )
+        if (
+            result.checksum != intent.expected_checksum
+            or version.checksum != intent.expected_checksum
+        ):
+            error = ChecksumMismatchError("stored checksum differs from the upload intent")
+            intent.register_retry(str(error))
+            await self._intents.save(intent)
+            raise error
         await self._intents.advance(intent.request_id, IntentState.OBJECT_STORED)
         intent.advance(IntentState.OBJECT_STORED)
         return result
 
     async def _register_catalog(
-        self, intent: UploadIntent, version: DocumentVersion, metadata: dict[str, Any]
+        self, intent: ProcessingIntent, version: DocumentVersion, metadata: dict[str, Any]
     ) -> None:
         """Đăng ký entity phiên bản và chuyển intent sang CatalogRegistered."""
         await self._catalog.register_version(version, metadata)
         await self._intents.advance(intent.request_id, IntentState.CATALOG_REGISTERED)
         intent.advance(IntentState.CATALOG_REGISTERED)
 
-    async def _fail(self, intent: UploadIntent, reason: str) -> None:
+    async def _fail(self, intent: ProcessingIntent, reason: str) -> None:
         """Đánh dấu intent thất bại kèm lý do để cảnh báo."""
         intent.last_error = reason
         intent.state = IntentState.FAILED

@@ -5,7 +5,7 @@ MAIN_FOLDER = src
 TEST_FOLDER = tests
 PY_FILES = $(shell find $(MAIN_FOLDER) -name "*.py")
 
-.PHONY: venv requirements format style lint typecheck unit test examples run reconcile docs-check compose-up compose-ready compose-patch compose-down
+.PHONY: venv requirements format style lint typecheck unit test examples run reconcile dispatch docs-check compose-up compose-ready compose-patch compose-down
 
 # Môi trường: conda cấp interpreter 3.12, uv quản lý dependency.
 # Sau khi `make venv`, dùng một trong hai cách để vào môi trường:
@@ -68,6 +68,9 @@ run:
 
 reconcile:
 	uv run python -m document_service.worker.reconcile
+
+dispatch:
+	uv run python -m document_service.worker.dispatch
 
 docs-check:
 	npm install --no-save --silent mermaid@11.12.0 jsdom@26.1.0

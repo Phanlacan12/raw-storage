@@ -20,13 +20,14 @@ from botocore.exceptions import BotoCoreError, ClientError
 from document_service.adapter.outbound.base import OutboundAdapter
 from document_service.config import StorageSettings
 from document_service.domain.dto import ObjectInfo, PutResult
+from document_service.domain.errors import DependencyUnavailableError
 from document_service.domain.port import ObjectStorePort
 from document_service.domain.value import Checksum, StorageUri
 from document_service.infrastructure.health import DependencyKind, HealthResult
 from document_service.infrastructure.resilience.executor import ResilientCallExecutor
 from document_service.infrastructure.resilience.retry import ClassifiedError, ErrorClass
 from document_service.utils.asyncx import ThreadOffloader
-from document_service.utils.hashing import digest_of
+from document_service.utils.hashing import StreamingHasher, digest_of
 
 _RETRYABLE_CODES = frozenset({"SlowDown", "RequestTimeout", "InternalError", "ServiceUnavailable"})
 _CHUNK_SIZE = 1024 * 1024
@@ -34,6 +35,8 @@ _CHUNK_SIZE = 1024 * 1024
 
 class S3ObjectStoreAdapter(ObjectStorePort, OutboundAdapter):
     """Adapter Object Storage tương thích S3."""
+
+    extra_kinds = frozenset({DependencyKind.REQUIRED_FOR_WRITE})
 
     def __init__(self, settings: StorageSettings, executor: ResilientCallExecutor) -> None:
         """Dựng client boto3 theo cấu hình và executor của phụ thuộc storage."""
@@ -60,21 +63,20 @@ class S3ObjectStoreAdapter(ObjectStorePort, OutboundAdapter):
     ) -> PutResult:
         """Ghi object nếu chưa tồn tại; nếu đã có thì giữ nguyên bản cũ."""
         existing = await self.head(uri)
-        if existing.etag:
-            return PutResult(
-                etag=existing.etag,
-                size_bytes=existing.size_bytes,
-                checksum=checksum,
-                already_existed=True,
+        if not existing.etag:
+            body = b"".join([chunk async for chunk in stream])
+            actual = Checksum(checksum.algorithm, digest_of(body, checksum.algorithm))
+            response = await self._call(
+                lambda: self._offloader.call(self._put_object, uri, body, actual)
             )
-        body = b"".join([chunk async for chunk in stream])
-        response = await self._call(
-            lambda: self._offloader.call(self._put_object, uri, body, checksum)
-        )
+            if response:
+                return PutResult(str(response["ETag"]).strip('"'), len(body), actual)
+            # Một lượt ghi khác đã thắng If-None-Match trong lúc đọc stream.
+            existing = await self.head(uri)
+        if existing.checksum is None:
+            raise DependencyUnavailableError("object_store", "concurrent object disappeared")
         return PutResult(
-            etag=str(response.get("ETag", "")).strip('"'),
-            size_bytes=len(body),
-            checksum=checksum,
+            existing.etag, existing.size_bytes, existing.checksum, already_existed=True
         )
 
     async def put_overwrite(
@@ -92,14 +94,20 @@ class S3ObjectStoreAdapter(ObjectStorePort, OutboundAdapter):
 
     async def head(self, uri: StorageUri) -> ObjectInfo:
         """Thông tin object, trả size 0 nếu chưa tồn tại."""
-        try:
-            response = await self._call(lambda: self._offloader.call(self._head_object, uri))
-        except ClassifiedError as error:
-            if error.error_class is ErrorClass.NON_RETRYABLE_CLIENT:
-                return ObjectInfo(key=uri.key, size_bytes=0)
-            raise
+        response = await self._call(lambda: self._offloader.call(self._head_object, uri))
+        if not response:
+            return ObjectInfo(key=uri.key, size_bytes=0)
+        metadata = response.get("Metadata") or {}
+        if "content-digest" in metadata:
+            checksum = Checksum.parse(metadata["content-digest"])
+        else:
+            # Phiên bản cũ lưu checksum khai báo. Băm lại bytes trước khi phục hồi.
+            algorithm = metadata.get("checksum", "sha256:").partition(":")[0]
+            digest = await StreamingHasher(algorithm).consume_async(self.open_stream(uri))
+            checksum = Checksum(algorithm, digest.hex_digest())
         return ObjectInfo(
             key=uri.key,
+            checksum=checksum,
             size_bytes=int(response.get("ContentLength", 0) or 0),
             etag=str(response.get("ETag", "")).strip('"'),
         )
@@ -119,11 +127,11 @@ class S3ObjectStoreAdapter(ObjectStorePort, OutboundAdapter):
         async def _iterator() -> AsyncIterator[bytes]:
             response = await self._call(lambda: self._offloader.call(self._get_object, uri))
             body = response["Body"]
-            while True:
-                chunk = await self._offloader.call(body.read, _CHUNK_SIZE)
-                if not chunk:
-                    break
-                yield chunk
+            try:
+                while chunk := await self._offloader.call(body.read, _CHUNK_SIZE):
+                    yield chunk
+            finally:
+                await self._offloader.call(body.close)
 
         return _iterator()
 
@@ -152,8 +160,10 @@ class S3ObjectStoreAdapter(ObjectStorePort, OutboundAdapter):
                 Bucket=uri.bucket,
                 Key=uri.key,
                 Body=body,
-                Metadata={"checksum": str(checksum)},
-            )
+                Metadata={"content-digest": str(checksum)},
+                IfNoneMatch="*",
+            ),
+            empty_on_status=412,
         )
 
     def _put_raw(self, uri: StorageUri, payload: bytes, content_type: str) -> dict[str, Any]:
@@ -166,7 +176,9 @@ class S3ObjectStoreAdapter(ObjectStorePort, OutboundAdapter):
 
     def _head_object(self, uri: StorageUri) -> dict[str, Any]:
         """HEAD một object."""
-        return self._guard(lambda: self._client.head_object(Bucket=uri.bucket, Key=uri.key))
+        return self._guard(
+            lambda: self._client.head_object(Bucket=uri.bucket, Key=uri.key), empty_on_status=404
+        )
 
     def _get_object(self, uri: StorageUri) -> dict[str, Any]:
         """GET một object."""
@@ -192,7 +204,7 @@ class S3ObjectStoreAdapter(ObjectStorePort, OutboundAdapter):
             )
         )
 
-    def _guard(self, operation: Callable[[], Any]) -> Any:
+    def _guard(self, operation: Callable[[], Any], empty_on_status: int | None = None) -> Any:
         """Chuyển lỗi boto3 thành ClassifiedError để executor phân loại."""
         try:
             return operation()
@@ -201,6 +213,8 @@ class S3ObjectStoreAdapter(ObjectStorePort, OutboundAdapter):
             status = int(
                 error.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 500) or 500
             )
+            if status == empty_on_status:
+                return {}
             error_class = (
                 ErrorClass.RETRYABLE_THROTTLED
                 if code in _RETRYABLE_CODES

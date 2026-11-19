@@ -13,6 +13,7 @@ from typing import Any
 
 from document_service.adapter.outbound.base import OutboundAdapter
 from document_service.adapter.outbound.sqlite_support import SqliteDatabase
+from document_service.domain.dto import Page, PageRequest
 from document_service.domain.model import AuditEvent
 from document_service.domain.port import AuditPort
 from document_service.domain.value import Actor, DocumentId
@@ -33,22 +34,12 @@ class StructuredAuditLogger(AuditPort, OutboundAdapter):
 
     async def record(self, event: AuditEvent) -> None:
         """Ghi một bản ghi audit."""
-        _AUDIT_LOGGER.info(
-            "audit",
-            extra={
-                "actor": event.actor.principal_id,
-                "action": event.action,
-                "target_id": event.target_id,
-                "result": event.result,
-                "detail": event.detail,
-            },
-        )
-        await self._call(
+        written = await self._call(
             lambda: self._db.execute(
                 """
                 INSERT INTO audit_event (
-                    actor, action, target_id, document_id, result, detail, occurred_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    actor, action, target_id, document_id, result, detail, occurred_at, delivery_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(delivery_id) DO NOTHING
                 """,
                 (
                     event.actor.principal_id,
@@ -58,16 +49,30 @@ class StructuredAuditLogger(AuditPort, OutboundAdapter):
                     event.result,
                     event.detail,
                     event.occurred_at.isoformat(),
+                    event.delivery_id,
                 ),
             )
         )
+
+        if written:
+            _AUDIT_LOGGER.info(
+                "audit",
+                extra={
+                    "actor": event.actor.principal_id,
+                    "action": event.action,
+                    "target_id": event.target_id,
+                    "result": event.result,
+                    "detail": event.detail,
+                },
+            )
 
     async def list_for_document(self, document_id: DocumentId) -> list[AuditEvent]:
         """Audit của một tài liệu và các phiên bản của nó (POC-14)."""
         rows = await self._call(
             lambda: self._db.query(
                 """
-                SELECT actor, action, target_id, document_id, result, detail, occurred_at
+                SELECT actor, action, target_id, document_id, result, detail,
+                       occurred_at, delivery_id
                 FROM audit_event
                 WHERE document_id = ? OR target_id LIKE ?
                 ORDER BY event_id
@@ -76,6 +81,19 @@ class StructuredAuditLogger(AuditPort, OutboundAdapter):
             )
         )
         return [self._from_row(row) for row in rows]
+
+    async def list_page(self, document_id: DocumentId, page: PageRequest) -> Page[AuditEvent]:
+        """Keyset dựa trên event_id, đọc thêm một dòng để xác định trang cuối."""
+        rows = await self._call(
+            lambda: self._db.query(
+                """SELECT * FROM audit_event
+               WHERE (document_id = ? OR target_id = ?) AND event_id > ?
+               ORDER BY event_id LIMIT ?""",
+                (str(document_id), str(document_id), page.position, page.page_size + 1),
+            )
+        )
+        last = rows[min(len(rows), page.page_size) - 1]["event_id"] if rows else page.position
+        return page.window([self._from_row(row) for row in rows], last)
 
     async def _probe_dependency(self) -> HealthResult:
         """Đếm số bản ghi audit, thao tác chỉ đọc."""
@@ -93,4 +111,5 @@ class StructuredAuditLogger(AuditPort, OutboundAdapter):
             result=row["result"],
             detail=row["detail"],
             occurred_at=datetime.fromisoformat(row["occurred_at"]),
+            delivery_id=row["delivery_id"],
         )

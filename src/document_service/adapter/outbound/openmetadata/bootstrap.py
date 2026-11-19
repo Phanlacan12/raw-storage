@@ -15,17 +15,13 @@ from document_service.adapter.outbound.openmetadata import endpoints
 from document_service.adapter.outbound.openmetadata.client import OmHttpClient
 from document_service.adapter.outbound.openmetadata.endpoints import OmFqnBuilder
 from document_service.config import CatalogSettings
-from document_service.domain.errors import DomainError
+from document_service.domain.errors import SchemaNotReadyError
 from document_service.domain.metadata_fields import DOCUMENT_FIELDS, INTEGER_FIELDS, VERSION_FIELDS
 from document_service.utils.logging_setup import get_logger
 
 _LOGGER = get_logger(__name__)
 _STRING_PROPERTY = "string"
 _INTEGER_PROPERTY = "integer"
-
-
-class SchemaNotReadyError(DomainError):
-    """Schema của catalog chưa đủ điều kiện để service nhận việc."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,5 +203,10 @@ class OmSchemaMigration:
                     extra={"entity_type": entity_type, "added": ",".join(added)},
                 )
             await self._registrar.assert_filterable(
-                entity_type, list(self._settings.required_properties)
+                entity_type,
+                [
+                    name
+                    for name in self._settings.required_properties
+                    if entity_type == "file" or name in DOCUMENT_FIELDS
+                ],
             )

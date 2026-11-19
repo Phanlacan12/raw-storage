@@ -93,6 +93,7 @@ class CatalogSettings(BaseModel):
     pinned_version: str = ""
     drive_service_name: str = "raw-documents"
     root_directory: str = "documents"
+    require_existing_collection: bool = False
     required_properties: list[str] = Field(default_factory=lambda: list(FILTERABLE_FIELDS))
 
 
@@ -283,11 +284,13 @@ class SettingsProvider(metaclass=SingletonMeta):
 
     def __init__(self) -> None:
         """Đọc cấu hình ngay khi khởi tạo."""
-        self._settings = Settings()
+        self._settings: Settings | None = Settings()
 
     @property
     def settings(self) -> Settings:
-        """Cấu hình đang hiệu lực."""
+        """Cấu hình đang hiệu lực; nạp lại từ nguồn nếu đã bị `reset()`."""
+        if self._settings is None:
+            self._settings = Settings()
         return self._settings
 
     def reload(self) -> Settings:
@@ -298,6 +301,14 @@ class SettingsProvider(metaclass=SingletonMeta):
     def replace(self, settings: Settings) -> None:
         """Thay cấu hình, chỉ dùng trong test và script."""
         self._settings = settings
+
+    def reset(self) -> None:
+        """Đưa provider về trạng thái chưa nạp (quy tắc R2 cho singleton).
+
+        Khác `reload()`: `reset()` **không** đọc cấu hình ngay, lần truy cập
+        `settings` kế tiếp mới nạp lại từ nguồn.
+        """
+        self._settings = None
 
 
 def get_settings() -> Settings:

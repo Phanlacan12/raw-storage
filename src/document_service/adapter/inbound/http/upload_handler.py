@@ -15,6 +15,7 @@ from document_service.domain.errors import InvalidValueError
 from document_service.domain.model import Principal
 from document_service.domain.value import Checksum, DocumentId, IdempotencyKey, VersionLabel
 from document_service.utils.hashing import StreamingHasher
+from document_service.utils.ids import UlidGenerator
 
 CHUNK_SIZE = 1024 * 1024
 MAX_UPLOAD_BYTES = 512 * 1024 * 1024
@@ -106,4 +107,4 @@ class IdempotencyKeyFilter:
             return IdempotencyKey(raw_value)
         if self._required:
             raise InvalidValueError("missing Idempotency-Key header")
-        return IdempotencyKey("auto-generated-key")
+        return IdempotencyKey(UlidGenerator().new_id("REQ"))

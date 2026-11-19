@@ -7,6 +7,7 @@ vì custom property chưa đăng ký sẽ làm việc lọc metadata âm thầm 
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -54,7 +55,9 @@ class ApplicationFactory:
     async def _lifespan(self, application: FastAPI) -> AsyncIterator[None]:
         """Chạy migration schema khi start, dọn tài nguyên khi stop."""
         del application
-        await self._run_startup()
+        await asyncio.wait_for(
+            self._run_startup(), self._container.settings.health.startup_deadline_seconds
+        )
         yield
         _LOGGER.info("service stopped")
 
@@ -66,8 +69,10 @@ class ApplicationFactory:
             _LOGGER.info("starting with the fake profile, skipping catalog migration")
             return
         client = OmHttpClient(settings.catalog, self._container.executor("catalog"))
-        await OmSchemaMigration(client, settings.catalog).run_on_startup()
-        await client.aclose()
+        try:
+            await OmSchemaMigration(client, settings.catalog).run_on_startup()
+        finally:
+            await client.aclose()
         self._container.health.mark_startup_done()
         _LOGGER.info("catalog schema migration complete")
 
