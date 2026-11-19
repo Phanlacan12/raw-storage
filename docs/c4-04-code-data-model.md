@@ -53,7 +53,6 @@ classDiagram
     }
 
     class Relationship {
-        +string relationship_id
         +string relation_type
         +string source_version_id
         +string target_version_id
@@ -70,6 +69,32 @@ classDiagram
         +string state
         +int retry_count
         +datetime updated_at
+    }
+
+    class MetadataSource {
+        <<enumeration>>
+        manual
+        synced
+        extracted
+    }
+
+    class MetadataChange {
+        +string change_id
+        +string target_id
+        +string field_name
+        +string old_value
+        +string new_value
+        +MetadataSource source
+        +string actor
+        +datetime changed_at
+    }
+
+    class DocumentTypeSchema {
+        +string document_type
+        +List~string~ required_fields
+        +List~string~ optional_fields
+        +List~string~ filterable_fields
+        +int schema_version
     }
 
     class AccessPolicy {
@@ -91,15 +116,25 @@ classDiagram
 
     Collection "1" --> "0..*" Document : chứa
     Collection "1" --> "0..*" Collection : cấp trên
-    Document "1" --> "1..*" DocumentVersion : có phiên bản
+    Document "1" --> "0..*" DocumentVersion : có phiên bản
     Document "1" --> "0..1" DocumentVersion : current_version_id
     DocumentVersion "1" --> "0..*" Relationship : là nguồn
     DocumentVersion "1" --> "0..*" Relationship : là đích
     Document "1" --> "0..1" AccessPolicy : áp dụng
     DocumentVersion "1" --> "0..1" UploadIntent : được tạo bởi
+    Document "1" --> "0..*" MetadataChange : lịch sử metadata
+    DocumentVersion "1" --> "0..*" MetadataChange : lịch sử metadata
+    DocumentTypeSchema "1" --> "0..*" Document : ràng buộc metadata
+    MetadataChange --> MetadataSource
     AuditEvent ..> Document : tham chiếu
     AuditEvent ..> DocumentVersion : tham chiếu
 ```
+
+**Ba điểm đọc sơ đồ cho đúng:**
+
+1. **`Document` có thể có 0 phiên bản.** `POST /api/v1/documents` đăng ký tài liệu logic trước, phiên bản nội dung đến sau; tài liệu chưa có bản nào được duyệt thì `current_version_id` rỗng (mục 2.4 báo cáo). Vì vậy cardinality là `0..*`, không phải `1..*`.
+2. **`Relationship` không có ID riêng.** Khoá tự nhiên là bộ ba `(relation_type, source_version_id, target_version_id)`; khai báo lại cùng bộ ba là thao tác idempotent. Không sinh ID thừa để tránh hai bản ghi cùng ngữ nghĩa mà khác ID.
+3. **`MetadataChange` là nơi trả lời yêu cầu "phân biệt metadata nhập thủ công, đồng bộ từ nguồn và tự động trích xuất" (mục 2.3 báo cáo).** Nó khác `AuditEvent`: audit trả lời *ai đã làm gì*, `MetadataChange` trả lời *giá trị này từ đâu ra*. Lịch sử thay đổi metadata mô tả do catalog giữ (entity version của OpenMetadata); `MetadataChange` chỉ bắt buộc cho các trường trong `DocumentTypeSchema.required_fields` và các trường kiểm soát.
 
 ## 4.2. Bất biến phải được code thực thi
 
@@ -119,6 +154,10 @@ classDiagram
 | I12 | Mọi thay đổi `status`, `access_policy`, `current_version_id`, quan hệ đều có `AuditEvent` với actor và thời điểm | D16 | POC-10, 14 |
 | I13 | Retry với cùng `idempotency_key` không sinh thêm `DocumentVersion` | D11 | POC-18, 21 |
 | I14 | `latest` theo thứ tự phiên bản **khác** `current approved`; chỉ D7 được cập nhật trường bản hiện hành | D7 | POC-07, 10 |
+| I15 | Mọi giá trị metadata bắt buộc đều ghi được `MetadataSource`; metadata tự động trích xuất **chỉ** từ thuộc tính kỹ thuật của file, không đọc nội dung | D4, D23 | POC-01, 24 |
+| I16 | Truy vấn quan hệ hai chiều phải trả kèm `direction`; **không** được đảo `source_version_id`/`target_version_id` để biểu diễn chiều vào, vì như vậy là phát biểu sai một cạnh | D8 | POC-06 |
+| I17 | Xóa tài liệu hoặc hết retention **không** xóa `AuditEvent` và lịch sử trạng thái; chỉ object và metadata khai thác bị thu hồi | D25, D16 | POC-11, 15, 25 |
+| I18 | Tạo phiên bản bị từ chối nếu thiếu trường trong `DocumentTypeSchema.required_fields` của `document_type` tương ứng | D23 | POC-24 |
 
 ## 4.3. Máy trạng thái của Document Version
 
@@ -146,14 +185,17 @@ Chuyển `Obsolete` làm thay đổi điều kiện khai thác bản hiện hàn
 
 ## 4.4. Nhóm metadata và vị trí gắn
 
-| Nhóm | Trường ví dụ | Gắn với | Ai được ghi |
-|---|---|---|---|
-| Technical | `file_name`, `format`, `size`, `checksum`, `storage_uri` | Document Version | Document Service (tự động trích xuất) |
-| Descriptive | `title`, `description`, `document_type`, `tags`, `language` | Document | Owner qua Catalog UI/API hoặc Document Service |
-| Organizational | `owner`, `department`, `collection_id` | Document | Owner / Quản trị viên |
-| Lifecycle | `version_label`, `status`, `created_at`, `approved_at`, `approved_by` | Document Version | Document Service |
-| Governance | `classification`, `access_policy`, `retention_policy` | Document | Document Service |
-| Relationship | `relation_type`, `source_version_id`, `target_version_id` | Document Version | Document Service |
+| Nhóm | Trường ví dụ | Gắn với | Ai được ghi | `metadata_source` thường gặp |
+|---|---|---|---|---|
+| Technical | `file_name`, `format`, `size`, `checksum`, `storage_uri` | Document Version | Document Service (tự động trích xuất) | `extracted` |
+| Descriptive | `title`, `description`, `document_type`, `tags`, `language` | Document | Owner qua Catalog UI/API hoặc Document Service | `manual` hoặc `synced` |
+| Organizational | `owner`, `department`, `collection_id` | Document | Owner / Quản trị viên | `manual` hoặc `synced` |
+| Lifecycle | `version_label`, `status`, `created_at`, `approved_at`, `approved_by` | Document Version | Document Service | `manual` (hành động có chủ thể) |
+| Governance | `classification`, `access_policy`, `retention_policy` | Document | Document Service | `manual` hoặc `synced` |
+| Relationship | `relation_type`, `source_version_id`, `target_version_id` | Document Version | Document Service | `manual` hoặc `synced` |
+| Schema | `required_fields`, `optional_fields`, `filterable_fields` theo `document_type` | DocumentTypeSchema | Quản trị viên kho qua D23 | — |
+
+`approved_at`/`approved_by` **chỉ** được ghi khi phiên bản thực sự đi qua trạng thái `Approved`. Loại bỏ một bản `Draft` (`Draft → Obsolete`) **không** được ghi hai trường này, vì khi đó chúng sẽ nói sai rằng bản nháp đã từng được duyệt.
 
 Trường dùng để **lọc** bắt buộc phải có đường truy vấn đã kiểm chứng, không chỉ có khả năng lưu giá trị (POC-19).
 
@@ -172,7 +214,8 @@ Bảng sau là **ứng viên ánh xạ**, không phải khẳng định sản ph
 | `references`, `supersedes` | Entity reference / custom properties hoặc registry relation | Related Documents / structured properties hoặc registry relation |
 | `current_version_id` | Thuộc tính có kiểm soát trên Document/Directory | Thuộc tính có kiểm soát; **không đồng nhất với `latest` của VersionSet** |
 | File gốc | S3 object nằm ngoài catalog | S3 object nằm ngoài catalog; `DataHubFile` là file đính kèm, không thay kho này |
-| UploadIntent, AuditEvent của Document Service | Nằm ngoài catalog (C7 + log) | Nằm ngoài catalog (C7 + log) |
+| UploadIntent, AuditEvent, MetadataChange, outbox của Document Service | Nằm ngoài catalog, trong **C7 Service State Store**; audit đồng thời đẩy sang log tập trung. Chỉ log stream là **không đủ**: POC-14 cần truy vấn audit theo `document_id` | Tương tự: C7 + log |
+| DocumentTypeSchema | Nguồn sự thật ở C7/cấu hình của D23; phần ánh xạ sang catalog là `OmCustomPropertyRegistrar.ensureProperties(...)` | Structured property definitions |
 
 ## 4.6. Quy ước object key
 
@@ -224,13 +267,15 @@ flowchart LR
         A11["SAD v1.1<br/>Approved"]
     end
 
-    U10 -.->|"supersedes"| U12
-    S10 -.->|"supersedes"| S20
+    U12 -.->|"supersedes"| U10
+    S20 -.->|"supersedes"| S10
     S20 -->|"derived_from"| U12
     A11 -->|"references"| S20
 
     class U12,S20,A11 approved
     class U10,S10 obsolete
 ```
+
+**Chiều của cạnh là một phần ngữ nghĩa, không phải cách vẽ:** `supersedes` đi từ **bản mới sang bản cũ** (`v1.2 supersedes v1.0`), `derived_from` đi từ **bản dẫn xuất sang bản nguồn** (`SRS v2.0 derived_from URD v1.2`), `references` đi từ **bản tham chiếu sang bản được tham chiếu**. Khi trả kết quả truy vấn hai chiều, cạnh vào phải được trả kèm `direction=incoming` và **giữ nguyên** `source_version_id`/`target_version_id` — đảo hai đầu để biểu diễn chiều vào là phát biểu sai một quan hệ (bất biến I16).
 
 Khi SRS lên v2.1, quan hệ `SRS v2.0 --derived_from--> URD v1.2` **phải giữ nguyên**, không tự chuyển sang v2.1 (bất biến I6, test case POC-09).

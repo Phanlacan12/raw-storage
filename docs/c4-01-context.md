@@ -33,7 +33,7 @@ flowchart TB
     X8["Pipeline chuẩn hóa nội dung<br/>[External System — Ngoài phạm vi]<br/>Markdown, OCR, chunking, embedding"]
 
     P1 -->|"upload file gốc, sửa metadata mô tả [HTTPS]"| CORE
-    P2 -->|"quản trị schema, policy, retention [HTTPS]"| CORE
+    P2 -->|"quản trị collection, schema metadata,<br/>policy, retention, xóa [HTTPS]"| CORE
     P4 -->|"ghi nhận chuyển trạng thái phiên bản [HTTPS]"| CORE
     P1 -->|"tìm và tải tài liệu theo quyền [HTTPS]"| CORE
     P3 -.->|"đọc tài liệu tích hợp, thử API [HTTPS]"| CORE
@@ -61,7 +61,7 @@ flowchart TB
 | ID | Vai trò | Mục đích sử dụng kho | Yêu cầu liên quan |
 |---|---|---|---|
 | P1 | Người dùng nghiệp vụ / Owner tài liệu | Đăng tài liệu, khai báo và duy trì metadata mô tả, tìm và tải tài liệu trong phạm vi quyền | 2.2, 2.3, 2.5, 6.3 |
-| P2 | Quản trị viên kho | Định nghĩa schema metadata tối thiểu, chính sách truy cập, retention; kiểm tra chất lượng metadata theo mục 4.1; xử lý hàng đợi đối soát lỗi | 4.1, 6.3 |
+| P2 | Quản trị viên kho | Định nghĩa schema metadata tối thiểu theo loại tài liệu (D23), quản trị collection (D24), chính sách truy cập và retention (D9, D25); kiểm tra chất lượng metadata theo mục 4.1; xử lý hàng đợi đối soát lỗi | 2.2, 2.3, 4.1, 6.3 |
 | P3 | Nhà phát triển ứng dụng khai thác | Tích hợp ứng dụng với API/sự kiện của kho; không được ghi object trực tiếp | 2.5, 3.3 |
 | P4 | Người phê duyệt tài liệu | Quyết định phát hành phiên bản. **Workflow xét duyệt nhiều bước nằm ngoài kho**; kho chỉ ghi nhận kết quả chuyển trạng thái và actor/time | 2.1, 2.4 |
 
@@ -84,8 +84,10 @@ flowchart TB
 
 - Tiếp nhận và lưu file đúng định dạng gốc: PDF, DOCX, XLSX, PPTX, Markdown, TXT và các định dạng tài liệu thông dụng.
 - Quản lý metadata chuẩn và mở rộng, phiên bản nội dung, trạng thái `Draft/Approved/Obsolete`.
-- Quan hệ theo phiên bản ở mức tối thiểu: `references`, `derived_from`, `supersedes`.
+- Quan hệ theo phiên bản ở mức tối thiểu: `references`, `derived_from`, `supersedes`, truy vấn được hai chiều kèm chiều của cạnh.
 - Tìm kiếm theo metadata qua API, phân quyền đầu-cuối, audit, sự kiện thay đổi.
+- Tổ chức tài liệu theo collection; kiểm tra hợp lệ metadata theo loại tài liệu; ghi nhận nguồn gốc metadata.
+- Vòng đời file: retention, thu hồi, xóa logic, xóa vật lý và khôi phục trong cửa sổ cho phép.
 
 **Ngoài phạm vi (không thuộc tiêu chí nghiệm thu)**
 
