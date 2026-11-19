@@ -7,19 +7,23 @@ store) được chốt bằng kết quả test, không bằng lập luận.
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 import respx
 
 from document_service.adapter.outbound.fake.in_memory import (
+    InMemoryDocumentLock,
     InMemoryIntentStore,
     InMemoryObjectStore,
     InMemoryRelationshipStore,
 )
 from document_service.adapter.outbound.intent.s3_manifest_store import S3ManifestIntentStore
 from document_service.adapter.outbound.intent.sqlite_store import SqliteRegistryIntentStore
+from document_service.adapter.outbound.lock.redis_lock import RedisDocumentLock
 from document_service.adapter.outbound.openmetadata import endpoints
 from document_service.adapter.outbound.openmetadata.client import OmHttpClient
 from document_service.adapter.outbound.openmetadata.lineage import OmLineageRelationshipStore
@@ -27,8 +31,13 @@ from document_service.adapter.outbound.relationship.sqlite_registry import (
     SqliteRelationshipRegistry,
 )
 from document_service.adapter.outbound.sqlite_support import SqliteDatabase
-from document_service.config import CatalogSettings, DependencyResiliencePolicy
-from document_service.domain.port import IntentStorePort, RelationshipStorePort
+from document_service.config import (
+    CatalogSettings,
+    DependencyResiliencePolicy,
+    LockKind,
+    LockSettings,
+)
+from document_service.domain.port import DocumentLockPort, IntentStorePort, RelationshipStorePort
 from document_service.infrastructure.resilience.executor import ResilientCallExecutor
 from tests.contract.fake_openmetadata import FakeOpenMetadataServer
 
@@ -84,3 +93,53 @@ async def relationship_store(
                 yield OmLineageRelationshipStore(client, executor)
         finally:
             await client.aclose()
+
+
+# tests/conftest.py::clean_env (autouse) xoá mọi `DS_*`, nên PHẢI đọc REDIS_URL ở
+# mức module lúc import; cùng mẫu đã dùng ở tests/integration/test_real_infrastructure.py.
+REDIS_URL = os.environ.get("DS_LOCK__REDIS_URL", "")
+
+
+@pytest.fixture(params=["in_memory", "redis"])
+async def document_lock(
+    request: pytest.FixtureRequest,
+) -> AsyncIterator[DocumentLockPort]:
+    """Hai hiện thực của document lock, ứng với quyết định Q12 (C13).
+
+    `in_memory` chạy luôn, `redis` yêu cầu `DS_LOCK__REDIS_URL` trỏ tới Redis
+    thật; không có thì skip. `acquire_timeout_seconds=0.1` để case 5 kiểm được
+    fail-fast trên cả hai hiện thực.
+    """
+    if request.param == "in_memory":
+        settings = LockSettings(kind=LockKind.IN_MEMORY, acquire_timeout_seconds=0.1)
+        yield InMemoryDocumentLock(settings)
+        return
+    pytest.importorskip("redis")
+    if not REDIS_URL:
+        pytest.skip("thiếu DS_LOCK__REDIS_URL, xem deploy/README.md")
+    import redis.asyncio as redis_async
+
+    client = redis_async.from_url(REDIS_URL, socket_timeout=0.5)
+    try:
+        await client.ping()
+    except Exception as error:  # noqa: BLE001
+        await client.aclose()
+        pytest.skip(f"redis unreachable: {error}")
+    settings = LockSettings(
+        kind=LockKind.REDIS,
+        redis_url=REDIS_URL,
+        key_prefix=f"ds:test:{uuid4().hex}",
+        acquire_timeout_seconds=0.1,
+        lease_seconds=2.0,
+        renew_interval_seconds=0.7,
+    )
+    policy = DependencyResiliencePolicy(
+        connect_timeout_seconds=0.3,
+        read_timeout_seconds=1.0,
+        total_timeout_seconds=1.0,
+        max_attempts=1,
+    )
+    executor = ResilientCallExecutor("document_lock", policy)
+    lock = RedisDocumentLock(settings, executor, client=client)
+    yield lock
+    await lock.aclose()
