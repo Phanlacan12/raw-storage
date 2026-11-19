@@ -38,9 +38,11 @@ from document_service.domain.port import RelationshipStorePort
 from document_service.domain.value import Direction, DocumentVersionId, RelationType
 from document_service.infrastructure.health import DependencyKind, HealthResult
 from document_service.infrastructure.resilience.executor import ResilientCallExecutor
+from document_service.utils.clock import Clock, SystemClock
 
 _ENTITY_TYPE = "file"
 _PAGE_SIZE = 200
+_DEFAULT_TTL_SECONDS = 60.0
 
 
 class _VersionIndex:
@@ -50,27 +52,46 @@ class _VersionIndex:
     chỗ duy nhất biết cách đi giữa hai thế giới đó.
     """
 
-    def __init__(self, client: OmHttpClient) -> None:
-        """Nhận client HTTP, chưa gọi mạng cho tới lần tra đầu tiên."""
+    def __init__(
+        self,
+        client: OmHttpClient,
+        ttl_seconds: float = _DEFAULT_TTL_SECONDS,
+        clock: Clock | None = None,
+    ) -> None:
+        """Nhận client HTTP, TTL cache và đồng hồ; chưa gọi mạng cho tới lần tra đầu tiên."""
         self._client = client
-        self._by_version: dict[str, tuple[str, str]] = {}
+        self._clock = clock or SystemClock()
+        self._ttl_seconds = ttl_seconds
+        self._by_version: dict[str, tuple[str, str, float]] = {}
 
     def remember(self, version_id: str, entity_id: str, fqn: str) -> None:
-        """Ghi nhớ một File entity đã biết.
+        """Ghi nhớ một File entity đã biết kèm hạn cache.
 
         Chỉ cần chiều version → (UUID, FQN): khi đọc lineage, FQN đã nằm sẵn trong
         cạnh nên không phải tra ngược từ UUID.
         """
-        self._by_version[version_id] = (entity_id, fqn)
+        expires_at = self._now() + self._ttl_seconds
+        self._by_version[version_id] = (entity_id, fqn, expires_at)
+
+    def forget(self, version_id: str) -> None:
+        """Xoá entry khỏi cache sau khi entity bị xoá ở catalog (X34)."""
+        self._by_version.pop(version_id, None)
 
     async def entity_of(self, version_id: DocumentVersionId) -> tuple[str, str]:
-        """(UUID, FQN) của phiên bản; làm mới cache một lần nếu chưa thấy."""
+        """(UUID, FQN) của phiên bản; làm mới cache nếu hết TTL hoặc chưa thấy."""
         key = str(version_id)
-        if key not in self._by_version:
+        entry = self._by_version.get(key)
+        if entry is None or entry[2] <= self._now():
+            self._by_version.pop(key, None)
             await self._refresh()
-        if key not in self._by_version:
+        entry = self._by_version.get(key)
+        if entry is None:
             raise DocumentNotFoundError(f"version {version_id} has no file entity in the catalog")
-        return self._by_version[key]
+        return entry[0], entry[1]
+
+    def _now(self) -> float:
+        """Thời điểm hiện tại theo giây, dùng cho so sánh TTL."""
+        return self._clock.now().timestamp()
 
     async def _refresh(self) -> None:
         """Liệt kê toàn bộ File entity, theo trang, nạp vào cache."""
@@ -152,7 +173,7 @@ class OmLineageRelationshipStore(RelationshipStorePort, OutboundAdapter):
         return result
 
     async def remove(self, relationship: Relationship) -> None:
-        """Xoá một lineage edge."""
+        """Xoá một lineage edge và quên cache FQN hai đầu."""
         source_id, _ = await self._index.entity_of(relationship.source_version_id)
         target_id, _ = await self._index.entity_of(relationship.target_version_id)
         await self._client.delete(
@@ -164,6 +185,8 @@ class OmLineageRelationshipStore(RelationshipStorePort, OutboundAdapter):
                 "toId": target_id,
             },
         )
+        self._index.forget(str(relationship.source_version_id))
+        self._index.forget(str(relationship.target_version_id))
 
     async def _probe_dependency(self) -> HealthResult:
         """Dùng chung phép thử với catalog: phiên bản server."""

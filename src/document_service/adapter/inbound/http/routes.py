@@ -167,13 +167,16 @@ async def create_version(
         ctx.idempotency_key,
         version_label,
     )
-    result: CreateVersionResult = await ctx.container.use_cases.create_version().execute(
-        CreateVersionCommand(
-            request=prepared.request,
-            principal=ctx.principal,
-            stream_factory=prepared.stream_factory,
+    try:
+        result: CreateVersionResult = await ctx.container.use_cases.create_version().execute(
+            CreateVersionCommand(
+                request=prepared.request,
+                principal=ctx.principal,
+                stream_factory=prepared.stream_factory,
+            )
         )
-    )
+    finally:
+        await prepared.aclose()
     return VersionResponse.from_domain(
         result.version, created=result.created, duplicate=result.duplicate
     )

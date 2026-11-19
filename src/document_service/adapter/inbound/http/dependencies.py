@@ -40,7 +40,7 @@ def require_idempotency_key(
 
 def get_upload_handler() -> UploadHandler:
     """Handler nhận file upload (D4)."""
-    return UploadHandler()
+    return UploadHandler(get_container().settings.storage)
 
 
 def require_write_mode() -> None:

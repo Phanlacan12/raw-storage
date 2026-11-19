@@ -190,7 +190,8 @@ class ServiceContainer(metaclass=SingletonMeta):
         self._executors.register("object_store", resilience.storage)
         self._executors.register("intent_store", resilience.intent)
         self._executors.register("relationship_store", resilience.relationship)
-        self._executors.register("idp", resilience.idp)
+        # Executor `idp` đã bị loại (X50, c4-09 mục 5.3): OidcTokenVerifier không
+        # nhận executor nào, nên khối `resilience.idp` cũ hoàn toàn vô tác dụng.
         self._executors.register("events", resilience.events)
         self._executors.register("outbox", resilience.intent)
         self._executors.register("audit", resilience.intent)
@@ -218,13 +219,20 @@ class ServiceContainer(metaclass=SingletonMeta):
     def _build_real_ports(self) -> PortBundle:
         """Bộ adapter dùng OpenMetadata, Object Storage và registry sqlite."""
         database = SqliteDatabase(self._settings.intent.sqlite_path)
-        client = OmHttpClient(self._settings.catalog, self._executors.get("catalog"))
+        catalog_client = OmHttpClient(self._settings.catalog, self._executors.get("catalog"))
         catalog = OpenMetadataCatalogAdapter(
-            client, self._settings.catalog, self._executors.get("catalog")
+            catalog_client, self._settings.catalog, self._executors.get("catalog")
         )
         objects = S3ObjectStoreAdapter(self._settings.storage, self._executors.get("object_store"))
+        # Lineage store có client HTTP **riêng** dựng trên executor của chính nó
+        # (X22, c4-09 mục 5.3, luật L-EX1): mọi lời gọi của nó phải đi qua executor
+        # `relationship_store` để breaker và health indicator nói đúng về traffic
+        # thật, không trộn với executor `catalog`.
+        lineage_client = OmHttpClient(
+            self._settings.catalog, self._executors.get("relationship_store")
+        )
         relationships = (
-            OmLineageRelationshipStore(client, self._executors.get("relationship_store"))
+            OmLineageRelationshipStore(lineage_client, self._executors.get("relationship_store"))
             if self._settings.relationship.kind is RelationshipStoreKind.LINEAGE
             else SqliteRelationshipRegistry(database, self._executors.get("relationship_store"))
         )

@@ -146,9 +146,14 @@ class S3ManifestIntentStore(IntentStorePort, OutboundAdapter):
             raise ConcurrencyConflictError(f"intent object already claimed: {uri.key}")
 
     async def _put(self, uri: StorageUri, payload: dict[str, Any]) -> None:
-        """Ghi một object JSON, ghi đè nếu đã tồn tại."""
+        """Ghi một object JSON, ghi đè nếu đã tồn tại.
+
+        Không bọc thêm `_call` quanh lời gọi `self._objects.*`: `S3ObjectStoreAdapter`
+        đã có executor riêng, bọc hai lần làm retry nhân nhau và hai breaker cùng
+        đếm một lỗi (luật L-EX2, c4-09 mục 5.3).
+        """
         body = self._codec.dumpb(payload)
-        await self._call(lambda: self._objects.put_overwrite(uri, body))
+        await self._objects.put_overwrite(uri, body)
 
     async def _read(self, uri: StorageUri) -> dict[str, Any] | None:
         """Đọc một object JSON, None nếu chưa tồn tại."""

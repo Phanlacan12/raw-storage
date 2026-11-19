@@ -13,6 +13,10 @@ from typing import AsyncIterator
 
 import uvicorn
 from fastapi import FastAPI
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.types import ASGIApp
 
 from document_service.adapter.inbound.http import health_routes, routes
 from document_service.adapter.inbound.http.errors import install_error_handlers
@@ -20,9 +24,30 @@ from document_service.adapter.outbound.openmetadata.bootstrap import OmSchemaMig
 from document_service.adapter.outbound.openmetadata.client import OmHttpClient
 from document_service.config import AdapterProfile, get_settings
 from document_service.infrastructure.container import ServiceContainer
+from document_service.infrastructure.resilience.deadline import (
+    reset_request_deadline,
+    set_request_deadline,
+)
 from document_service.utils.logging_setup import get_logger
 
 _LOGGER = get_logger(__name__)
+
+
+class DeadlineMiddleware(BaseHTTPMiddleware):
+    """Đặt `request_deadline` ContextVar cho mọi request (X25)."""
+
+    def __init__(self, application: ASGIApp, budget_seconds: float) -> None:
+        """Nhận ứng dụng và ngân sách thời gian mỗi request."""
+        super().__init__(application)
+        self._budget_seconds = budget_seconds
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        """Set deadline trước khi vào route, reset sau khi response hoàn tất."""
+        token = set_request_deadline(self._budget_seconds)
+        try:
+            return await call_next(request)
+        finally:
+            reset_request_deadline(token)
 
 
 class ApplicationFactory:
@@ -45,6 +70,10 @@ class ApplicationFactory:
             version="0.1.0",
             description="Kho raw data dung chung: Object Storage S3 + OpenMetadata",
             lifespan=self._lifespan,
+        )
+        application.add_middleware(
+            DeadlineMiddleware,
+            budget_seconds=settings.app.request_budget_seconds,
         )
         install_error_handlers(application)
         application.include_router(routes.router, prefix=settings.app.api_prefix)

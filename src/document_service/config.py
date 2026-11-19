@@ -107,6 +107,8 @@ class StorageSettings(BaseModel):
     secret_key: str = ""
     presign_ttl_seconds: int = 300
     multipart_threshold_bytes: int = 16 * 1024 * 1024
+    multipart_part_bytes: int = 8 * 1024 * 1024
+    max_upload_bytes: int = 512 * 1024 * 1024
     object_prefix: str = "objects"
 
 
@@ -183,11 +185,6 @@ class ResilienceSettings(BaseModel):
         )
     )
     relationship: DependencyResiliencePolicy = Field(default_factory=DependencyResiliencePolicy)
-    idp: DependencyResiliencePolicy = Field(
-        default_factory=lambda: DependencyResiliencePolicy(
-            read_timeout_seconds=2.0, total_timeout_seconds=3.0, max_attempts=2
-        )
-    )
     events: DependencyResiliencePolicy = Field(
         default_factory=lambda: DependencyResiliencePolicy(
             read_timeout_seconds=3.0, total_timeout_seconds=5.0, max_attempts=2

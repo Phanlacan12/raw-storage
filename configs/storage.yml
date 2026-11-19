@@ -10,3 +10,5 @@ storage:
   # tài liệu cần thu hồi ngay phải dùng proxy qua dịch vụ.
   presign_ttl_seconds: 300
   multipart_threshold_bytes: 16777216
+  multipart_part_bytes: 8388608
+  max_upload_bytes: 536870912
