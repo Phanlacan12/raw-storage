@@ -19,6 +19,9 @@ htmlcov/
 .env
 .env.local
 local_data/
+# Dữ liệu của stack docker-compose (bind mount): mysql, opensearch, object store.
+# Vài trăm MB và thuộc về máy cục bộ, không bao giờ commit.
+deploy/data/
 
 # Node (chỉ dùng cho docs/tools/check-mermaid.mjs)
 node_modules/

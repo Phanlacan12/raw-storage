@@ -6,19 +6,80 @@ model.py để model chỉ còn thực thể và hành vi giữ bất biến.
 
 from __future__ import annotations
 
+from base64 import b64decode, urlsafe_b64encode
+from binascii import Error as Base64Error
 from dataclasses import dataclass, field
+from typing import Generic, Sequence, TypeVar
 
-from document_service.domain.model import AccessPolicy, DocumentMetadata, Principal
+from document_service.domain.errors import InvalidValueError
+from document_service.domain.model import AccessPolicy, DocumentMetadata, Principal, Relationship
 from document_service.domain.value import (
     Action,
     Actor,
     Checksum,
+    Direction,
     DocumentId,
     DocumentStatus,
     DocumentVersionId,
     IdempotencyKey,
     VersionLabel,
 )
+
+T = TypeVar("T")
+
+
+@dataclass(frozen=True, slots=True)
+class Page(Generic[T]):
+    """Trang dữ liệu, con trỏ rỗng khi đã tới cuối."""
+
+    items: tuple[T, ...]
+    next_cursor: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PageRequest:
+    """Giới hạn kết quả và con trỏ opaque mang offset hoặc khóa cuối."""
+
+    page_size: int = 50
+    cursor: str | None = None
+
+    def __post_init__(self) -> None:
+        if not 1 <= self.page_size <= 200:
+            raise InvalidValueError("page_size must be between 1 and 200")
+
+    @property
+    def position(self) -> int:
+        """Vị trí offset hoặc khóa của dòng cuối."""
+        if self.cursor is None:
+            return 0
+        try:
+            raw = b64decode(self.cursor, altchars=b"-_", validate=True)
+            if not raw.isdigit() or len(raw) > 18:
+                raise ValueError
+            return int(raw)
+        except (ValueError, Base64Error) as error:
+            raise InvalidValueError("invalid page cursor") from error
+
+    def window(self, items: Sequence[T], next_position: int) -> Page[T]:
+        """Đọc thêm một bản ghi để xác định có trang tiếp theo."""
+        cursor = None
+        if len(items) > self.page_size:
+            cursor = urlsafe_b64encode(str(next_position).encode()).decode()
+        return Page(tuple(items[: self.page_size]), cursor)
+
+    def slice(self, items: Sequence[T]) -> Page[T]:
+        """Phân trang theo offset trên tập đã sắp xếp."""
+        start = self.position
+        end = start + self.page_size
+        return self.window(items[start : end + 1], end)
+
+
+@dataclass(frozen=True, slots=True)
+class RelatedEdge:
+    """Cạnh giữ nguyên hai đầu đã khai báo và chiều nhìn từ phiên bản được hỏi."""
+
+    relationship: Relationship
+    direction: Direction
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +143,15 @@ class SearchQuery:
     page_size: int = 20
     cursor: str | None = None
 
+    @property
+    def offset(self) -> int:
+        """Search API dùng offset dạng số."""
+        if self.cursor is None:
+            return 0
+        if not self.cursor.isascii() or not self.cursor.isdigit() or len(self.cursor) > 18:
+            raise InvalidValueError("invalid search cursor")
+        return int(self.cursor)
+
     def filter_value(self, field_name: str) -> str | None:
         """Giá trị của một điều kiện lọc, nếu có."""
         for item in self.filters:
@@ -110,10 +180,15 @@ class SearchPage:
     next_cursor: str | None = None
     total_hits: int = 0
 
+    @property
+    def visible_hits(self) -> int:
+        """Số kết quả thực tế trong trang."""
+        return len(self.hits)
+
     def filtered(self, principal: Principal, action: Action = Action.VIEW_METADATA) -> SearchPage:
-        """Lọc lại kết quả theo quyền của chủ thể (POC-02, POC-17)."""
+        """Giữ tổng từ catalog và con trỏ, kể cả khi trang rỗng sau lọc quyền."""
         allowed = tuple(hit for hit in self.hits if hit.access_policy.permits(principal, action))
-        return SearchPage(hits=allowed, next_cursor=self.next_cursor, total_hits=len(allowed))
+        return SearchPage(hits=allowed, next_cursor=self.next_cursor, total_hits=self.total_hits)
 
 
 @dataclass(frozen=True, slots=True)

@@ -40,8 +40,8 @@ async def main() -> None:
         line("livez", f"{live.status_code} {live.json()}")
         line("readyz", f"{ready.status_code} {ready.json()}")
         check("livez still 200", live.status_code == 200)
-        check("readyz reports not ready", ready.status_code == 503)
-        check("mode is NOT_READY", ready.json()["mode"] == "NOT_READY")
+        check("metadata reads remain ready", ready.status_code == 200)
+        check("mode is READ_ONLY", ready.json()["mode"] == "READ_ONLY")
 
         heading("3. Write APIs are blocked correctly")
         blocked = await client.post(

@@ -24,10 +24,10 @@ from document_service.adapter.outbound.openmetadata.search import (
     OmSearchQueryBuilder,
     OmSearchResultMapper,
 )
-from document_service.application.metadata_builder import CatalogMetadataBuilder
 from document_service.config import CatalogSettings
-from document_service.domain.dto import EntityRef, SearchFilter, SearchPage, SearchQuery
+from document_service.domain.dto import EntityRef, SearchPage, SearchQuery
 from document_service.domain.errors import DocumentNotFoundError
+from document_service.domain.metadata_builder import CatalogMetadataBuilder
 from document_service.domain.model import Collection, Document, DocumentVersion
 from document_service.domain.port import MetadataCatalogPort
 from document_service.domain.value import DocumentId, DocumentVersionId
@@ -38,6 +38,8 @@ from document_service.infrastructure.resilience.retry import ClassifiedError, Er
 
 class OpenMetadataCatalogAdapter(MetadataCatalogPort, OutboundAdapter):
     """Đọc và ghi metadata trên OpenMetadata."""
+
+    extra_kinds = frozenset({DependencyKind.REQUIRED_FOR_WRITE})
 
     def __init__(
         self,
@@ -66,6 +68,24 @@ class OpenMetadataCatalogAdapter(MetadataCatalogPort, OutboundAdapter):
         )
         return self._as_ref(payload, "directory")
 
+    async def find_collection(self, collection_id: str) -> Collection | None:
+        """Đọc Directory của collection và phân biệt với Directory của tài liệu."""
+        try:
+            entity = await self._get_directory(DocumentId(collection_id))
+        except DocumentNotFoundError:
+            return None
+        extension = entity.get("extension") or {}
+        if not extension.get("collection_type"):
+            return None
+        return Collection(
+            collection_id,
+            entity.get("displayName") or collection_id,
+            collection_type=extension["collection_type"],
+            parent_collection_id=extension.get("parent_collection_id") or None,
+            owner=extension.get("owner", ""),
+            department=extension.get("department", ""),
+        )
+
     async def register_document(self, document: Document) -> EntityRef:
         """Tạo hoặc cập nhật Directory đại diện tài liệu."""
         metadata = self._document_extension(document)
@@ -84,17 +104,20 @@ class OpenMetadataCatalogAdapter(MetadataCatalogPort, OutboundAdapter):
         return self._as_ref(payload, "file")
 
     async def patch_controlled_fields(
-        self, version_id: DocumentVersionId, fields: dict[str, Any]
+        self, document_id: DocumentId, version_id: DocumentVersionId, fields: dict[str, Any]
     ) -> None:
         """Cập nhật trường kiểm soát của một phiên bản bằng JSON Patch."""
-        entity = await self._find_file(version_id)
+        entity = await self._find_file(document_id, version_id)
         captured = self._guard.capture(entity)
         updated = await self._client.patch(
-            f"{endpoints.FILES}/{entity['id']}", OmJsonPatchBuilder.from_fields(fields)
+            f"{endpoints.FILES}/{entity['id']}",
+            OmJsonPatchBuilder.from_fields(
+                self._extensions.to_extension(fields), entity.get("extension") or {}
+            ),
         )
         if self._guard.changed_unexpectedly(captured, updated):
-            self._logger.warning(
-                "entity version mismatch after patch",
+            self._logger.debug(
+                "entity version changed after patch",
                 extra={"version_id": str(version_id), "captured": captured},
             )
 
@@ -102,7 +125,10 @@ class OpenMetadataCatalogAdapter(MetadataCatalogPort, OutboundAdapter):
         """Cập nhật trường kiểm soát ở mức tài liệu."""
         entity = await self._get_directory(document_id)
         await self._client.patch(
-            f"{endpoints.DIRECTORIES}/{entity['id']}", OmJsonPatchBuilder.from_fields(fields)
+            f"{endpoints.DIRECTORIES}/{entity['id']}",
+            OmJsonPatchBuilder.from_fields(
+                self._extensions.to_extension(fields), entity.get("extension") or {}
+            ),
         )
 
     async def read_document(self, document_id: DocumentId) -> Document:
@@ -114,19 +140,21 @@ class OpenMetadataCatalogAdapter(MetadataCatalogPort, OutboundAdapter):
 
     async def list_versions(self, document_id: DocumentId) -> list[DocumentVersion]:
         """Danh sách phiên bản, đọc từ các File entity trong Directory."""
-        payload = await self._client.get(
-            endpoints.FILES,
-            {
-                "directory": self._fqn.document_fqn(document_id),
-                "fields": "extension",
-                "limit": 1000,
-            },
-        )
-        items = payload.get("data", [])
+        params: dict[str, Any] = {
+            "directory": self._fqn.document_fqn(document_id),
+            "fields": "extension",
+            "limit": 1000,
+        }
         versions: list[DocumentVersion] = []
-        for item in items if isinstance(items, list) else []:
-            if isinstance(item, dict) and item.get("extension"):
-                versions.append(self._files.to_version(item))
+        while True:
+            payload = await self._client.get(endpoints.FILES, params)
+            for item in payload.get("data", []) or []:
+                if isinstance(item, dict) and item.get("extension"):
+                    versions.append(self._files.to_version(item))
+            after = (payload.get("paging") or {}).get("after")
+            if not after:
+                break
+            params["after"] = after
         return sorted(versions, key=lambda version: version.created_at)
 
     async def search(self, query: SearchQuery) -> SearchPage:
@@ -163,15 +191,17 @@ class OpenMetadataCatalogAdapter(MetadataCatalogPort, OutboundAdapter):
             raise DocumentNotFoundError(f"document {document_id} is not registered")
         return payload
 
-    async def _find_file(self, version_id: DocumentVersionId) -> dict[str, Any]:
-        """Tìm File entity của một phiên bản qua Search API rồi đọc lại theo id."""
-        filters = (SearchFilter(field_name="document_version_id", value=str(version_id)),)
-        query = SearchQuery(filters=filters, page_size=1)
-        page = await self.search(query)
-        if not page.hits:
-            raise DocumentNotFoundError(f"version {version_id} not found")
-        hit = page.hits[0]
-        fqn = self._fqn.version_fqn(hit.document_id, hit.version_id)
+    async def _find_file(
+        self, document_id: DocumentId, version_id: DocumentVersionId
+    ) -> dict[str, Any]:
+        """Đọc File entity của một phiên bản theo FQN.
+
+        KHÔNG đi qua Search API: index của OpenMetadata cập nhật bất đồng bộ, nên một
+        phiên bản vừa tạo xong có thể chưa có trong index và lệnh duyệt sẽ thất bại
+        với `version ... not found`. FQN suy ra được từ document_id + version_id nên
+        không cần tra cứu gì thêm.
+        """
+        fqn = self._fqn.version_fqn(document_id, version_id)
         try:
             payload = await self._client.get(
                 f"{endpoints.FILE_BY_NAME}/{fqn}", {"fields": "extension"}
@@ -186,13 +216,10 @@ class OpenMetadataCatalogAdapter(MetadataCatalogPort, OutboundAdapter):
 
     def _document_extension(self, document: Document) -> dict[str, Any]:
         """Metadata mức tài liệu ghi vào `extension` của Directory."""
-        current = document.current_version_id
         return {
             **self._metadata_builder.descriptive_fields(document.metadata),
             "document_id": str(document.document_id),
-            "classification": document.access_policy.classification,
-            "retention_policy": document.retention_policy,
-            "current_version_id": str(current) if current is not None else "",
+            **self._metadata_builder.document_fields(document),
         }
 
     def _as_ref(self, payload: dict[str, Any], entity_type: str) -> EntityRef:

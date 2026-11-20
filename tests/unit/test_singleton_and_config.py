@@ -126,3 +126,11 @@ class TestConfigPrecedence:
     def test_provider_is_singleton(self, settings: Settings) -> None:
         """Cấu hình chỉ đọc một lần cho cả tiến trình."""
         assert SettingsProvider().settings is settings
+
+    def test_provider_reset_reloads_from_source(self) -> None:
+        """`reset()` bỏ cấu hình đã nạp; lần đọc kế tiếp nạp lại từ nguồn (R2, X36)."""
+        provider = SettingsProvider()
+        provider.replace(Settings(profile=AdapterProfile.FAKE))
+        replaced = provider.settings
+        provider.reset()
+        assert provider.settings is not replaced

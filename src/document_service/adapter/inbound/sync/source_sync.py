@@ -50,13 +50,19 @@ class SourceFile:
     relative_path: str
     file_name: str
     content_format: str
-    payload: bytes
+    path: Path
+    size_bytes: int
 
     @property
     def checksum(self) -> Checksum:
-        """Checksum nội dung file."""
+        """Checksum nội dung file, đọc theo chunk để không nạp cả file vào RAM."""
         hasher = StreamingHasher()
-        hasher.update(self.payload)
+        with self.path.open("rb") as handle:
+            while True:
+                chunk = handle.read(_CHUNK_SIZE)
+                if not chunk:
+                    break
+                hasher.update(chunk)
         return Checksum(algorithm=hasher.algorithm, hex_digest=hasher.hex_digest())
 
     @property
@@ -143,7 +149,8 @@ class FileSystemSourceConnector(SourceConnector):
                     content_format=self._FORMATS.get(
                         path.suffix.lower(), "application/octet-stream"
                     ),
-                    payload=path.read_bytes(),
+                    path=path,
+                    size_bytes=path.stat().st_size,
                 )
             )
         return files
@@ -264,24 +271,32 @@ class SourceSyncJob:
     def _version_command(
         self, source_file: SourceFile, document_id: DocumentId
     ) -> CreateVersionCommand:
-        """Dựng command tạo phiên bản từ một file ở nguồn."""
+        """Dựng command tạo phiên bản từ một file ở nguồn.
+
+        Idempotency key gồm `document_id` để hai tài liệu khác nhau cùng nội dung
+        không bị coi là replay của nhau (X31, bất biến I9).
+        """
         checksum = source_file.checksum
-        payload = source_file.payload
+        path = source_file.path
         request = UploadRequest(
             document_id=document_id,
             original_file_name=source_file.file_name,
             content_format=source_file.content_format,
             checksum=checksum,
-            size_bytes=len(payload),
+            size_bytes=source_file.size_bytes,
             actor=self._principal.as_actor(),
-            idempotency_key=IdempotencyKey(f"sync-{checksum.hex_digest[:24]}"),
+            idempotency_key=IdempotencyKey(f"sync-{document_id}-{checksum.hex_digest[:16]}"),
             label=None,
         )
 
         def stream_factory() -> AsyncIterator[bytes]:
             async def iterator() -> AsyncIterator[bytes]:
-                for index in range(0, len(payload), _CHUNK_SIZE):
-                    yield payload[index : index + _CHUNK_SIZE]
+                with path.open("rb") as handle:
+                    while True:
+                        chunk = handle.read(_CHUNK_SIZE)
+                        if not chunk:
+                            return
+                        yield chunk
 
             return iterator()
 
@@ -309,5 +324,8 @@ class SourceSyncScheduler:
             _LOGGER.info("source sync is disabled in the configuration")
             return
         while True:
-            await self._job.run_once()
+            try:
+                await self._job.run_once()
+            except Exception:
+                _LOGGER.exception("source sync cycle failed")
             await asyncio.sleep(self._settings.interval_seconds)

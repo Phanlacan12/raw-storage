@@ -9,7 +9,6 @@ from __future__ import annotations
 from fastapi import Header, Request
 
 from document_service.adapter.inbound.http.upload_handler import IdempotencyKeyFilter, UploadHandler
-from document_service.adapter.inbound.security.auth import PrincipalResolver
 from document_service.domain.model import Principal
 from document_service.domain.value import Action, IdempotencyKey
 from document_service.infrastructure.container import ServiceContainer
@@ -26,7 +25,7 @@ def get_principal(
 ) -> Principal:
     """Chủ thể gọi API, xác thực theo cấu hình bảo mật."""
     container = get_container()
-    resolver = PrincipalResolver(container.settings.security)
+    resolver = container.resolver
     return resolver.resolve(authorization, dict(request.headers))
 
 
@@ -41,12 +40,17 @@ def require_idempotency_key(
 
 def get_upload_handler() -> UploadHandler:
     """Handler nhận file upload (D4)."""
-    return UploadHandler()
+    return UploadHandler(get_container().settings.storage)
 
 
 def require_write_mode() -> None:
     """Chặn hành động ghi khi service đang ở chế độ suy giảm (mục 10.4)."""
     get_container().gate.assert_allowed(Action.WRITE)
+
+
+def require_read_mode() -> None:
+    """Chặn đọc metadata khi chỉ còn khả năng cấp file từ cache."""
+    get_container().gate.assert_allowed(Action.VIEW_METADATA)
 
 
 def require_download_mode() -> None:

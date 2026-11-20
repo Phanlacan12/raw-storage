@@ -5,7 +5,7 @@ MAIN_FOLDER = src
 TEST_FOLDER = tests
 PY_FILES = $(shell find $(MAIN_FOLDER) -name "*.py")
 
-.PHONY: venv requirements format style lint typecheck unit test examples run reconcile docs-check compose-up compose-down
+.PHONY: venv requirements format style lint typecheck unit test examples run reconcile dispatch docs-check compose-up compose-ready compose-patch compose-down
 
 # Môi trường: conda cấp interpreter 3.12, uv quản lý dependency.
 # Sau khi `make venv`, dùng một trong hai cách để vào môi trường:
@@ -69,12 +69,39 @@ run:
 reconcile:
 	uv run python -m document_service.worker.reconcile
 
+dispatch:
+	uv run python -m document_service.worker.dispatch
+
 docs-check:
 	npm install --no-save --silent mermaid@11.12.0 jsdom@26.1.0
 	node docs/tools/check-mermaid.mjs docs
 
 compose-up:
 	docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d
+
+# Chờ OpenMetadata khỏe, tạo bucket, rồi sửa hai cấu hình sai của OpenMetadata 1.12
+# cho loại `file` (xem deploy/patch_openmetadata.py). Tách khỏi compose-up vì
+# OpenMetadata mất vài phút mới healthy, trong khi `up -d` trả về ngay lập tức.
+compose-ready:
+	@set -e; \
+	echo "Waiting for OpenMetadata to become healthy (up to 20 minutes)..."; \
+	ready=0; \
+	for i in $$(seq 1 120); do \
+		if curl -sf http://localhost:8586/healthcheck >/dev/null 2>&1; then \
+			ready=1; break; \
+		fi; \
+		sleep 10; \
+	done; \
+	if [ "$$ready" != "1" ]; then echo "Timed out waiting for OpenMetadata"; exit 1; fi; \
+	echo "OpenMetadata is healthy"; \
+	set -a; . deploy/.env; set +a; \
+	uv run python deploy/create_bucket.py; \
+	uv run python deploy/patch_openmetadata.py
+
+# Chạy lại riêng bản vá cấu hình OpenMetadata, ví dụ sau khi Reindex trong UI.
+compose-patch:
+	set -a; . deploy/.env; set +a; \
+	uv run python deploy/patch_openmetadata.py
 
 compose-down:
 	docker compose -f deploy/docker-compose.yml down -v

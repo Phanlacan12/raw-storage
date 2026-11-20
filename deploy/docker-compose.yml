@@ -3,6 +3,21 @@
 # sẵn có của tổ chức, và MinIO OSS bản cũ không dùng cho triển khai mới.
 name: raw-storage-dev
 
+# Dùng chung cho `openmetadata-migrate` và `openmetadata`: hai container phải trỏ vào
+# cùng một database, lệch nhau thì migrate một nơi còn server đọc một nơi khác.
+x-openmetadata-env: &openmetadata-env
+  DB_HOST: mysql
+  DB_PORT: "3306"
+  OM_DATABASE: openmetadata_db
+  DB_USER: openmetadata_user
+  DB_USER_PASSWORD: ${MYSQL_PASSWORD:-openmetadata_password}
+  SEARCH_TYPE: opensearch
+  ELASTICSEARCH_HOST: opensearch
+  ELASTICSEARCH_PORT: "9200"
+  ELASTICSEARCH_SCHEME: http
+  AUTHORIZER_CLASS_NAME: org.openmetadata.service.security.DefaultAuthorizer
+  AUTHENTICATION_PROVIDER: basic
+
 services:
   mysql:
     image: mysql:8.0.35
@@ -14,7 +29,7 @@ services:
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-openmetadata_password}
     command: --sort_buffer_size=10M --max_connections=300
     volumes:
-      - mysql-data:/var/lib/mysql
+      - ./data/mysql:/var/lib/mysql
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-password}"]
       interval: 10s
@@ -32,7 +47,7 @@ services:
       - OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g
       - DISABLE_INSTALL_DEMO_CONFIG=true
     volumes:
-      - opensearch-data:/usr/share/opensearch/data
+      - ./data/opensearch:/usr/share/opensearch/data
     healthcheck:
       test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q '\"status\"'"]
       interval: 10s
@@ -40,6 +55,22 @@ services:
       retries: 30
     ports:
       - "9200:9200"
+
+  # OpenMetadata KHÔNG tự tạo schema. Khởi động khi database chưa migrate thì nó thoát
+  # ngay với mã 1 kèm log `IllegalStateException: There are pending migrations`.
+  # Service này chạy đúng một lần rồi kết thúc; server chỉ khởi động sau khi nó thành
+  # công. Compose chính thức của OpenMetadata cũng tách bước này ra.
+  openmetadata-migrate:
+    image: docker.getcollate.io/openmetadata/server:1.12.0
+    container_name: rs-openmetadata-migrate
+    restart: "no"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+    environment: *openmetadata-env
+    entrypoint: ["/bin/bash", "-c", "./bootstrap/openmetadata-ops.sh migrate"]
 
   openmetadata:
     image: docker.getcollate.io/openmetadata/server:1.12.0
@@ -49,20 +80,13 @@ services:
         condition: service_healthy
       opensearch:
         condition: service_healthy
-    environment:
-      DB_HOST: mysql
-      DB_PORT: "3306"
-      OM_DATABASE: openmetadata_db
-      DB_USER: openmetadata_user
-      DB_USER_PASSWORD: ${MYSQL_PASSWORD:-openmetadata_password}
-      SEARCH_TYPE: opensearch
-      ELASTICSEARCH_HOST: opensearch
-      ELASTICSEARCH_PORT: "9200"
-      ELASTICSEARCH_SCHEME: http
-      AUTHORIZER_CLASS_NAME: org.openmetadata.service.security.DefaultAuthorizer
-      AUTHENTICATION_PROVIDER: basic
+      openmetadata-migrate:
+        condition: service_completed_successfully
+    environment: *openmetadata-env
     healthcheck:
-      test: ["CMD-SHELL", "curl -s http://localhost:8586/healthcheck | grep -q healthy"]
+      # Image openmetadata KHÔNG có curl (`/bin/sh: curl: not found`), nên healthcheck
+      # cũ không bao giờ pass và container kẹt ở `health: starting` mãi mãi.
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8586/healthcheck | grep -q healthy"]
       interval: 15s
       timeout: 10s
       retries: 40
@@ -77,9 +101,12 @@ services:
     container_name: rs-objectstore
     command: server -s3 -dir=/data -master.volumeSizeLimitMB=256
     volumes:
-      - objectstore-data:/data
+      - ./data/objectstore:/data
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O- http://localhost:8333 >/dev/null 2>&1 || exit 1"]
+      # Phải dùng 127.0.0.1 chứ không phải localhost: busybox wget phân giải localhost
+      # thành [::1], mà SeaweedFS chỉ lắng nghe IPv4 nên bị `Connection refused` và
+      # container bị đánh `unhealthy` dù S3 vẫn phục vụ bình thường.
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8333 >/dev/null 2>&1 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 20
@@ -87,7 +114,23 @@ services:
       - "8333:8333"
       - "9333:9333"
 
-volumes:
-  mysql-data:
-  opensearch-data:
-  objectstore-data:
+  # Redis dùng cho khóa phân tán C13. Hai lựa chọn cố ý (c4-09 mục 12):
+  # - TẮT persistence (`--appendonly no --save ""`): một khóa sống sót qua restart
+  #   còn tệ hơn mất khóa, vì TTL của lease đã là giới hạn trên của thời gian giữ.
+  # - `noeviction`: với `allkeys-lru`, Redis có thể xóa một khóa ĐANG được giữ khi
+  #   đầy bộ nhớ — sai lầm không thể chấp nhận cho mutex.
+  redis:
+    image: redis:7.4-alpine
+    container_name: rs-redis
+    command: ["redis-server", "--appendonly", "no", "--save", "", "--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    ports:
+      - "6379:6379"
+
+# Không khai báo `volumes:` nữa. Dữ liệu nằm ngay trong deploy/data/ để nhìn thấy và
+# xoá được bằng tay, thay vì nằm trong vùng quản lý riêng của Docker.
+# `make compose-down` vẫn dọn container; muốn xoá dữ liệu thì xoá deploy/data/.

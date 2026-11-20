@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from fastapi import Depends, Query
+from fastapi import Depends
+from pydantic import BaseModel, Field
 
 from document_service.adapter.inbound.http.dependencies import (
     get_container,
@@ -51,8 +52,7 @@ class UploadContext:
     handler: UploadHandler
 
 
-@dataclass(frozen=True, slots=True)
-class SearchParams:
+class SearchParams(BaseModel):
     """Tham số tìm kiếm, dịch sang `SearchQuery` của miền nghiệp vụ."""
 
     text: str = ""
@@ -60,13 +60,19 @@ class SearchParams:
     status: DocumentStatus | None = None
     collection_id: str | None = None
     classification: str | None = None
-    page_size: int = 20
+    owner: str | None = None
+    version_label: str | None = None
+    title: str | None = None
+    page_size: int = Field(default=20, ge=1, le=200)
     cursor: str | None = None
 
     def to_query(self) -> SearchQuery:
         """Dựng truy vấn với các điều kiện lọc đã khai báo."""
         candidates = (
             ("document_type", self.document_type),
+            ("owner", self.owner),
+            ("version_label", self.version_label),
+            ("title", self.title),
             ("status", str(self.status) if self.status else None),
             ("collection_id", self.collection_id),
             ("classification", self.classification),
@@ -112,31 +118,3 @@ def get_upload_context(
         idempotency_key=idempotency_key,
         handler=handler,
     )
-
-
-class SearchParamsProvider:
-    """Đọc tham số tìm kiếm từ query string.
-
-    Viết thành lớp callable thay vì hàm nhiều tham số: FastAPI vẫn sinh đúng tài liệu
-    OpenAPI, còn chữ ký hàm không vượt giới hạn tham số của pylint.
-    """
-
-    async def __call__(
-        self,
-        text: str = Query(default=""),
-        document_type: str | None = Query(default=None),
-        status: DocumentStatus | None = Query(default=None),
-        collection_id: str | None = Query(default=None),
-        classification: str | None = Query(default=None),
-    ) -> SearchParams:
-        """Dựng SearchParams từ các điều kiện lọc."""
-        return SearchParams(
-            text=text,
-            document_type=document_type,
-            status=status,
-            collection_id=collection_id,
-            classification=classification,
-        )
-
-
-get_search_params = SearchParamsProvider()

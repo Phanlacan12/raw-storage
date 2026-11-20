@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import datetime
 from typing import Any
@@ -30,6 +31,70 @@ from document_service.domain.value import (
 )
 from document_service.utils.clock import utc_now
 
+# `fileType` của File entity là ENUM của OpenMetadata, không phải MIME type. Đẩy
+# thẳng `application/pdf` vào đây thì server trả 400 `Cannot construct instance of
+# FileType`. MIME thật vẫn được giữ nguyên ở trường `format` trong `extension`, nên
+# không mất thông tin; ánh xạ này chỉ để chọn đúng nhãn mà OpenMetadata hiểu.
+_FILE_TYPE_ENUM = (
+    "Document",
+    "Spreadsheet",
+    "Presentation",
+    "Image",
+    "Video",
+    "Audio",
+    "PDF",
+    "Archive",
+    "Code",
+    "Data",
+    "CSV",
+    "Text",
+    "Other",
+)
+
+_MIME_EXACT: dict[str, str] = {
+    "application/pdf": "PDF",
+    "text/csv": "CSV",
+    "application/json": "Data",
+    "application/xml": "Data",
+    "text/xml": "Data",
+    "application/yaml": "Data",
+    "application/zip": "Archive",
+    "application/gzip": "Archive",
+    "application/x-tar": "Archive",
+    "application/x-7z-compressed": "Archive",
+    "application/vnd.rar": "Archive",
+    "application/msword": "Document",
+    "application/rtf": "Document",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "Document",
+    "application/vnd.oasis.opendocument.text": "Document",
+    "application/vnd.ms-excel": "Spreadsheet",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "Spreadsheet",
+    "application/vnd.oasis.opendocument.spreadsheet": "Spreadsheet",
+    "application/vnd.ms-powerpoint": "Presentation",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": "Presentation",
+    "application/vnd.oasis.opendocument.presentation": "Presentation",
+}
+
+_MIME_PREFIX: tuple[tuple[str, str], ...] = (
+    ("image/", "Image"),
+    ("video/", "Video"),
+    ("audio/", "Audio"),
+    ("text/", "Text"),
+)
+
+
+def _as_file_type(content_format: str | None) -> str:
+    """Ánh xạ MIME type sang enum `fileType` của OpenMetadata."""
+    if not content_format:
+        return "Other"
+    mime = content_format.split(";", 1)[0].strip().lower()
+    if mime in _MIME_EXACT:
+        return _MIME_EXACT[mime]
+    for prefix, file_type in _MIME_PREFIX:
+        if mime.startswith(prefix):
+            return file_type
+    return "Other"
+
 
 class OmExtensionMapper:
     """Chuyển dict metadata của kho thành `extension` và ngược lại."""
@@ -39,6 +104,9 @@ class OmExtensionMapper:
         extension: dict[str, Any] = {}
         for key, value in metadata.items():
             if value is None:
+                continue
+            if key == "access_policy":
+                extension[key] = json.dumps(value, ensure_ascii=False)
                 continue
             extension[key] = (
                 ",".join(str(item) for item in value) if isinstance(value, (list, tuple)) else value
@@ -90,6 +158,7 @@ class OmDirectoryMapper:
             "extension": {
                 "collection_id": collection.collection_id,
                 "collection_type": collection.collection_type,
+                "parent_collection_id": collection.parent_collection_id or "",
                 "owner": collection.owner,
                 "department": collection.department,
             },
@@ -122,11 +191,15 @@ class OmDirectoryMapper:
         if not metadata.title:
             metadata = replace(metadata, title=str(payload.get("displayName", "")))
         current = extension.get("current_version_id") or ""
+        acl = json.loads(extension.get("access_policy") or "{}")
         return Document(
             document_id=document_id,
             metadata=metadata,
             access_policy=AccessPolicy(
-                classification=str(extension.get("classification", "restricted"))
+                classification=str(extension.get("classification", "restricted")),
+                allowed_groups=tuple(acl.get("allowed_groups", ())),
+                allowed_principals=tuple(acl.get("allowed_principals", ())),
+                require_proxy_download=bool(acl.get("require_proxy_download", False)),
             ),
             retention_policy=str(extension.get("retention_policy", "")),
             current_version_id=DocumentVersionId(str(current)) if current else None,
@@ -148,10 +221,16 @@ class OmFileEntityMapper:
             "displayName": f"{version.original_file_name} ({version.label})",
             "service": self._fqn.service_fqn,
             "directory": self._fqn.document_fqn(version.document_id),
-            "fileType": version.content_format or "Unknown",
+            "fileType": _as_file_type(version.content_format),
             "size": version.size_bytes,
             "checksum": str(version.checksum),
             "path": str(version.storage_uri),
+            # `columns` phải có mặt, kể cả rỗng. File tạo thiếu trường này thì mọi
+            # lệnh PATCH sau đó đều trả 500 `Cannot invoke "java.util.List.iterator()"
+            # because "updatedColumns" is null` — server duyệt danh sách columns khi
+            # so sánh phiên bản cũ/mới. Kho raw data không có khái niệm cột, nên để
+            # rỗng; đã đo: thiếu -> 500, có -> 200.
+            "columns": [],
             "extension": self._extensions.to_extension(metadata),
         }
 
@@ -170,35 +249,39 @@ class OmFileEntityMapper:
             content_format=str(extension.get("format", "")),
             size_bytes=int(extension.get("size", 0) or 0),
             status=DocumentStatus(str(extension.get("status", DocumentStatus.DRAFT))),
+            approved_by=extension.get("approved_by") or None,
+            obsoleted_by=extension.get("obsoleted_by") or None,
+            approved_at=self._optional_time(extension.get("approved_at")),
+            obsoleted_at=self._optional_time(extension.get("obsoleted_at")),
             created_by=str(extension.get("created_by", "")),
-            created_at=self._parse_time(extension.get("created_at")),
+            created_at=self._optional_time(extension.get("created_at")) or utc_now(),
         )
 
-    def _parse_time(self, raw: Any) -> datetime:
-        """Đọc thời điểm tạo, mặc định là hiện tại nếu thiếu."""
+    def _optional_time(self, raw: Any) -> datetime | None:
+        """Đọc thời điểm ISO nếu catalog đã lưu."""
         if isinstance(raw, str) and raw:
             try:
                 return datetime.fromisoformat(raw)
             except ValueError:
-                return utc_now()
-        return utc_now()
+                return None
+        return None
 
 
 class OmJsonPatchBuilder:
-    """Dựng JSON Patch chỉ gồm phép `replace` trên đường dẫn cố định.
-
-    Chỉ dùng `replace` vì theo bảng mục 11.2, `add` vào mảng **không** idempotent nên
-    không retry an toàn được.
-    """
+    """Dựng JSON Patch trên các thuộc tính có tên cố định của object extension."""
 
     def __init__(self) -> None:
         """Khởi tạo danh sách phép rỗng."""
         self._operations: list[dict[str, Any]] = []
 
-    def replace_extension(self, field_name: str, value: Any) -> OmJsonPatchBuilder:
+    def set_extension(self, field_name: str, value: Any, exists: bool) -> OmJsonPatchBuilder:
         """Thay giá trị một trường trong `extension`."""
         self._operations.append(
-            {"op": "replace", "path": f"/extension/{field_name}", "value": value}
+            {
+                "op": "replace" if exists else "add",
+                "path": f"/extension/{field_name}",
+                "value": value,
+            }
         )
         return self
 
@@ -207,11 +290,11 @@ class OmJsonPatchBuilder:
         return list(self._operations)
 
     @classmethod
-    def from_fields(cls, fields: dict[str, Any]) -> list[dict[str, Any]]:
+    def from_fields(cls, fields: dict[str, Any], existing: dict[str, Any]) -> list[dict[str, Any]]:
         """Dựng patch từ một dict trường cần cập nhật."""
         builder = cls()
         for key, value in fields.items():
-            builder.replace_extension(key, value)
+            builder.set_extension(key, value, key in existing)
         return builder.build()
 
 
@@ -227,6 +310,6 @@ class OmEntityVersionGuard:
         return float(payload.get("version", 0.0) or 0.0)
 
     def changed_unexpectedly(self, captured: float, payload: dict[str, Any]) -> bool:
-        """Entity đã bị người khác sửa giữa lúc đọc và lúc ghi hay chưa."""
+        """So sánh hai version quan sát được; một lượt PATCH cũng có thể tăng version."""
         current = float(payload.get("version", 0.0) or 0.0)
-        return current < captured
+        return current != captured

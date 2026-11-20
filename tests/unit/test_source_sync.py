@@ -18,10 +18,10 @@ from document_service.adapter.inbound.sync.source_sync import (
     SourceSyncScheduler,
 )
 from document_service.application.context import PolicySet, PortBundle
-from document_service.application.metadata_builder import CatalogMetadataBuilder
 from document_service.application.usecase.create_version import CreateVersionUseCase
 from document_service.application.usecase.register_document import RegisterDocumentUseCase
 from document_service.config import SourceSettings, SyncSettings
+from document_service.domain.metadata_builder import CatalogMetadataBuilder
 from document_service.domain.value import DocumentId
 
 
@@ -178,3 +178,63 @@ class TestSourceSyncJob:
         assert scheduler.enabled is False
         enabled = SyncSettings(enabled=True, sources=[_source(source_root)])
         assert SourceSyncScheduler(_job(ports, policies, enabled), enabled).enabled is True
+
+
+class TestIdempotencyAndResilience:
+    """X31, X33: idempotency key gồm document_id; vòng lặp không chết im lặng."""
+
+    async def test_two_documents_same_content_are_not_replays_of_each_other(
+        self, ports: PortBundle, policies: PolicySet, tmp_path: Path
+    ) -> None:
+        """X31/I9: hai `document_id` khác nhau cùng nội dung phải sinh đủ hai phiên bản."""
+        root_a = tmp_path / "share-a"
+        root_b = tmp_path / "share-b"
+        for root in (root_a, root_b):
+            (root / "d").mkdir(parents=True)
+            (root / "d" / "doc.pdf").write_bytes(b"cung noi dung")
+        settings = SyncSettings(
+            enabled=True,
+            sources=[
+                SourceSettings(
+                    source_id="share-a",
+                    source_type="filesystem",
+                    root_path=str(root_a),
+                    collection_id="PROJECT-A",
+                    document_type="SRS",
+                    classification="internal",
+                ),
+                SourceSettings(
+                    source_id="share-b",
+                    source_type="filesystem",
+                    root_path=str(root_b),
+                    collection_id="PROJECT-B",
+                    document_type="SRS",
+                    classification="internal",
+                ),
+            ],
+        )
+        report = await _job(ports, policies, settings).run_once()
+        assert report.versions_created == 2
+        assert report.failed == []
+
+    async def test_run_forever_survives_unexpected_exception(
+        self, ports: PortBundle, policies: PolicySet, source_root: Path
+    ) -> None:
+        """X33: một lỗi lạ không được làm vòng lặp đồng bộ thoát im lặng."""
+        import asyncio
+
+        settings = SyncSettings(enabled=True, interval_seconds=0.0, sources=[_source(source_root)])
+        job = _job(ports, policies, settings)
+        count = {"n": 0}
+
+        async def boom() -> object:
+            count["n"] += 1
+            if count["n"] == 1:
+                raise RuntimeError("boom")
+            raise asyncio.CancelledError
+
+        job.run_once = boom  # type: ignore[method-assign]
+        scheduler = SourceSyncScheduler(job, settings)
+        with pytest.raises(asyncio.CancelledError):
+            await scheduler.run_forever()
+        assert count["n"] == 2

@@ -34,6 +34,7 @@ CONFIG_FILE_ORDER = (
     "storage.yml",
     "intent_store.yml",
     "relationship_store.yml",
+    "lock.yml",
     "security.yml",
     "resilience.yml",
     "health.yml",
@@ -69,6 +70,13 @@ class RelationshipStoreKind(StrEnum):
     LINEAGE = "lineage"
 
 
+class LockKind(StrEnum):
+    """Hai hiện thực của document lock, ứng với quyết định Q12 (C13)."""
+
+    IN_MEMORY = "in_memory"
+    REDIS = "redis"
+
+
 class AppSettings(BaseModel):
     """Cấu hình chung của service (configs/app.yml)."""
 
@@ -93,6 +101,7 @@ class CatalogSettings(BaseModel):
     pinned_version: str = ""
     drive_service_name: str = "raw-documents"
     root_directory: str = "documents"
+    require_existing_collection: bool = False
     required_properties: list[str] = Field(default_factory=lambda: list(FILTERABLE_FIELDS))
 
 
@@ -106,6 +115,8 @@ class StorageSettings(BaseModel):
     secret_key: str = ""
     presign_ttl_seconds: int = 300
     multipart_threshold_bytes: int = 16 * 1024 * 1024
+    multipart_part_bytes: int = 8 * 1024 * 1024
+    max_upload_bytes: int = 512 * 1024 * 1024
     object_prefix: str = "objects"
 
 
@@ -127,6 +138,23 @@ class RelationshipStoreSettings(BaseModel):
     sqlite_path: str = "local_data/document_service.sqlite"
 
 
+class LockSettings(BaseModel):
+    """Cấu hình khóa tài liệu C13 (configs/lock.yml).
+
+    Quyết định Q12: `in_memory` chỉ chạy được một instance C1; triển khai nhiều
+    instance bắt buộc `redis`, không thì mất I4/I5 mà không có lỗi báo.
+    """
+
+    kind: LockKind = LockKind.IN_MEMORY
+    redis_url: str = "redis://localhost:6379/0"
+    key_prefix: str = "ds:lock"
+    lease_seconds: float = 15.0
+    renew_interval_seconds: float = 5.0
+    acquire_timeout_seconds: float = 0.5
+    acquire_retry_delay_seconds: float = 0.05
+    cancel_on_lease_loss: bool = True
+
+
 class SecuritySettings(BaseModel):
     """Cấu hình định danh và phân quyền (configs/security.yml)."""
 
@@ -139,7 +167,6 @@ class SecuritySettings(BaseModel):
     approver_groups: list[str] = Field(default_factory=lambda: ["document-approvers"])
     require_idempotency_key: bool = True
     policy_cache_ttl_seconds: int = 300
-    lock_timeout_seconds: float = 5.0
 
 
 class DependencyResiliencePolicy(BaseModel):
@@ -182,9 +209,13 @@ class ResilienceSettings(BaseModel):
         )
     )
     relationship: DependencyResiliencePolicy = Field(default_factory=DependencyResiliencePolicy)
-    idp: DependencyResiliencePolicy = Field(
+    lock: DependencyResiliencePolicy = Field(
         default_factory=lambda: DependencyResiliencePolicy(
-            read_timeout_seconds=2.0, total_timeout_seconds=3.0, max_attempts=2
+            connect_timeout_seconds=0.3,
+            read_timeout_seconds=1.0,
+            total_timeout_seconds=1.0,
+            max_attempts=1,
+            open_duration_seconds=5.0,
         )
     )
     events: DependencyResiliencePolicy = Field(
@@ -255,6 +286,7 @@ class Settings(BaseSettings):
     storage: StorageSettings = Field(default_factory=StorageSettings)
     intent: IntentStoreSettings = Field(default_factory=IntentStoreSettings)
     relationship: RelationshipStoreSettings = Field(default_factory=RelationshipStoreSettings)
+    lock: LockSettings = Field(default_factory=LockSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
     resilience: ResilienceSettings = Field(default_factory=ResilienceSettings)
     health: HealthSettings = Field(default_factory=HealthSettings)
@@ -283,11 +315,13 @@ class SettingsProvider(metaclass=SingletonMeta):
 
     def __init__(self) -> None:
         """Đọc cấu hình ngay khi khởi tạo."""
-        self._settings = Settings()
+        self._settings: Settings | None = Settings()
 
     @property
     def settings(self) -> Settings:
-        """Cấu hình đang hiệu lực."""
+        """Cấu hình đang hiệu lực; nạp lại từ nguồn nếu đã bị `reset()`."""
+        if self._settings is None:
+            self._settings = Settings()
         return self._settings
 
     def reload(self) -> Settings:
@@ -298,6 +332,14 @@ class SettingsProvider(metaclass=SingletonMeta):
     def replace(self, settings: Settings) -> None:
         """Thay cấu hình, chỉ dùng trong test và script."""
         self._settings = settings
+
+    def reset(self) -> None:
+        """Đưa provider về trạng thái chưa nạp (quy tắc R2 cho singleton).
+
+        Khác `reload()`: `reset()` **không** đọc cấu hình ngay, lần truy cập
+        `settings` kế tiếp mới nạp lại từ nguồn.
+        """
+        self._settings = None
 
 
 def get_settings() -> Settings:

@@ -223,3 +223,41 @@ class TestExecutor:
         second = registry.register("catalog", FAST_POLICY)
         assert first is second
         assert registry.get("catalog") is first
+
+
+class TestDeadlineContextVar:
+    """X25: deadline từ ContextVar lan truyền vào mọi lời gọi `_call`."""
+
+    async def test_executor_picks_up_context_deadline(self) -> None:
+        """Khi `request_deadline` được set, executor không tự `new_deadline`."""
+        from document_service.infrastructure.resilience.deadline import (
+            reset_request_deadline,
+            set_request_deadline,
+        )
+
+        executor = ResilientCallExecutor("dep", FAST_POLICY)
+
+        async def slow() -> str:
+            await asyncio.sleep(1)
+            return "never"
+
+        # Ngân sách rất nhỏ — nếu executor đọc được ContextVar, call phải bung
+        # DependencyUnavailableError gần như tức thì.
+        token = set_request_deadline(0.05)
+        try:
+            with pytest.raises(DependencyUnavailableError):
+                await executor.call(slow)
+        finally:
+            reset_request_deadline(token)
+
+    async def test_no_context_deadline_falls_back_to_executor_default(self) -> None:
+        """Ngoài request, executor dùng `new_deadline()` như cũ (worker nền)."""
+        from document_service.infrastructure.resilience.deadline import get_current_deadline
+
+        assert get_current_deadline() is None
+        executor = ResilientCallExecutor("dep", FAST_POLICY)
+
+        async def quick() -> str:
+            return "ok"
+
+        assert await executor.call(quick) == "ok"

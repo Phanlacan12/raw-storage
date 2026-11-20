@@ -15,12 +15,13 @@ from document_service.utils.files import LocalPaths
 
 SCHEMA_STATEMENTS: tuple[str, ...] = (
     """
-    CREATE TABLE IF NOT EXISTS upload_intent (
+    CREATE TABLE IF NOT EXISTS processing_intent (
         request_id TEXT PRIMARY KEY,
         idempotency_key TEXT NOT NULL UNIQUE,
         document_id TEXT NOT NULL,
-        version_id TEXT NOT NULL,
-        expected_checksum TEXT NOT NULL,
+        version_id TEXT,
+        expected_checksum TEXT,
+        kind TEXT NOT NULL DEFAULT 'upload',
         state TEXT NOT NULL,
         retry_count INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
@@ -106,7 +107,30 @@ class SqliteDatabase:
     def _initialize(self) -> None:
         """Tạo bảng và index nếu chưa có."""
         with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             self._apply_schema(connection, SCHEMA_STATEMENTS)
+            for table in ("audit_event", "outbox_event"):
+                columns_present = [
+                    row["name"] for row in connection.execute(f"PRAGMA table_info({table})")
+                ]
+                if "delivery_id" not in columns_present:
+                    connection.execute(f"ALTER TABLE {table} ADD COLUMN delivery_id TEXT")
+                connection.execute(
+                    f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{table}_delivery "
+                    f"ON {table}(delivery_id)"
+                )
+            legacy = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='upload_intent'"
+            ).fetchone()
+            if legacy:
+                columns = (
+                    "request_id, idempotency_key, document_id, version_id, expected_checksum, "
+                    "state, retry_count, created_at, updated_at, last_error, payload"
+                )
+                connection.execute(
+                    f"INSERT INTO processing_intent ({columns}) SELECT {columns} FROM upload_intent"
+                )
+                connection.execute("DROP TABLE upload_intent")
 
     def _apply_schema(self, connection: sqlite3.Connection, statements: Iterable[str]) -> None:
         """Chạy danh sách câu lệnh DDL."""

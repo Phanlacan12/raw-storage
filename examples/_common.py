@@ -16,7 +16,10 @@ import httpx
 
 def use_fake_profile() -> None:
     """Bật profile fake trước khi import container, và tắt màu log cho dễ đọc."""
-    os.environ.setdefault("DS_APP__PROFILE", "fake")
+    # Gán thẳng, KHÔNG dùng setdefault: nếu shell đã `source deploy/.env` (đặt
+    # DS_APP__PROFILE=openmetadata) thì setdefault giữ nguyên giá trị đó, và các ví dụ
+    # 01–06 vốn chỉ dành cho profile fake sẽ chạy lên hạ tầng thật rồi fail khó hiểu.
+    os.environ["DS_APP__PROFILE"] = "fake"
     os.environ.setdefault("DS_LOGGING__LEVEL", "WARNING")
     os.environ.setdefault("NO_COLOR", "1")
 

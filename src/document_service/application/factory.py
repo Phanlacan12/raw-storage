@@ -8,8 +8,9 @@ case mới không làm container phình ra.
 from __future__ import annotations
 
 from document_service.application.context import PolicySet, PortBundle
-from document_service.application.metadata_builder import CatalogMetadataBuilder
+from document_service.application.usecase.access_policy import UpdateAccessPolicyUseCase
 from document_service.application.usecase.approve_version import ApproveVersionUseCase
+from document_service.application.usecase.audit import ListAuditUseCase
 from document_service.application.usecase.create_version import CreateVersionUseCase
 from document_service.application.usecase.issue_download import IssueDownloadUseCase
 from document_service.application.usecase.register_document import RegisterDocumentUseCase
@@ -17,11 +18,8 @@ from document_service.application.usecase.relationships import (
     DeclareRelationshipUseCase,
     QueryRelationshipsUseCase,
 )
-from document_service.application.usecase.search_documents import (
-    ListAuditUseCase,
-    SearchDocumentsUseCase,
-    UpdateAccessPolicyUseCase,
-)
+from document_service.application.usecase.search_documents import SearchDocumentsUseCase
+from document_service.domain.metadata_builder import CatalogMetadataBuilder
 
 
 class UseCaseFactory:
@@ -33,16 +31,20 @@ class UseCaseFactory:
         policies: PolicySet,
         presign_ttl_seconds: int = 300,
         builder: CatalogMetadataBuilder | None = None,
+        require_existing_collection: bool = False,
     ) -> None:
         """Nhận bundle port, tập policy và thời hạn link tải."""
         self._ports = ports
         self._policies = policies
+        self._require_collection = require_existing_collection
         self._builder = builder or CatalogMetadataBuilder()
         self._presign_ttl_seconds = presign_ttl_seconds
 
     def register_document(self) -> RegisterDocumentUseCase:
         """Use case đăng ký tài liệu."""
-        return RegisterDocumentUseCase(self._ports, self._builder)
+        return RegisterDocumentUseCase(
+            self._ports, self._builder, require_existing_collection=self._require_collection
+        )
 
     def create_version(self) -> CreateVersionUseCase:
         """Use case tạo phiên bản."""

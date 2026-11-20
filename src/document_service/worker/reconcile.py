@@ -17,15 +17,18 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from datetime import timedelta
+from functools import partial
 
-from document_service.application.metadata_builder import CatalogMetadataBuilder
+from document_service.application.context import PortBundle
 from document_service.application.orchestration.snapshot import VersionSnapshot
+from document_service.application.orchestration.status_change_saga import StatusChangeSaga
 from document_service.application.orchestration.upload_saga import UploadSaga
 from document_service.config import Settings, get_settings
 from document_service.domain.errors import DomainError
-from document_service.domain.model import UploadIntent
-from document_service.domain.port import IntentStorePort, MetadataCatalogPort, ObjectStorePort
-from document_service.domain.value import DocumentId, IntentState
+from document_service.domain.metadata_builder import CatalogMetadataBuilder
+from document_service.domain.model import ProcessingIntent
+from document_service.domain.port import MetadataCatalogPort, ObjectStorePort
+from document_service.domain.value import DocumentId, IntentKind, IntentState
 from document_service.infrastructure.container import ServiceContainer
 from document_service.utils.logging_setup import get_logger
 
@@ -54,57 +57,70 @@ class ReconcileReport:
 class IntentRecoveryJob:
     """Tiếp tục các intent dở dang sau khi service restart hoặc phụ thuộc lỗi."""
 
-    def __init__(
-        self,
-        intents: IntentStorePort,
-        saga: UploadSaga,
-        catalog: MetadataCatalogPort,
-        settings: Settings,
-    ) -> None:
-        """Nhận intent store, saga, catalog và cấu hình ngưỡng retry."""
-        self._intents = intents
-        self._saga = saga
-        self._catalog = catalog
+    def __init__(self, ports: PortBundle, settings: Settings) -> None:
+        """Nhận cùng bộ port với luồng ghi để phục hồi ghi khóa, audit và outbox."""
+        self._ports = ports
+        self._saga = UploadSaga(ports.objects, ports.catalog, ports.intents)
         self._settings = settings
         self._builder = CatalogMetadataBuilder()
         self._snapshot = VersionSnapshot()
+        self._status_saga = StatusChangeSaga(ports, self._builder)
 
-    async def run_once(self) -> ReconcileReport:
-        """Quét và phục hồi một lượt."""
+    async def run_once(self, touched: set[DocumentId] | None = None) -> ReconcileReport:
+        """Quét và phục hồi một lượt, ghi nhận tài liệu cần kiểm tra sau phục hồi."""
         report = ReconcileReport()
         stale = timedelta(seconds=self._settings.intent.stale_after_seconds)
-        for intent in await self._intents.find_unfinished(stale):
-            if intent.retry_count >= self._settings.intent.max_retry_before_failed:
-                await self._give_up(intent)
-                report.failed += 1
-                continue
-            if await self._resume(intent):
+        for candidate in await self._ports.intents.find_unfinished(stale):
+            if candidate.kind is IntentKind.STATUS_CHANGE and touched is not None:
+                touched.add(candidate.document_id)
+            outcome = await self._ports.locks.with_lock(
+                candidate.document_id, partial(self._resume_locked, candidate)
+            )
+            if outcome is True:
                 report.recovered += 1
-            else:
+            elif outcome is False:
                 report.failed += 1
         return report
 
-    async def _resume(self, intent: UploadIntent) -> bool:
+    async def _resume_locked(self, candidate: ProcessingIntent) -> bool | None:
+        """Đọc lại sau khi lấy khóa để bỏ qua intent mà worker khác vừa hoàn tất."""
+        intent = await self._ports.intents.find_by_request_id(candidate.request_id)
+        if intent is None or intent.state.is_terminal or intent.updated_at != candidate.updated_at:
+            return None
+        if intent.retry_count >= self._settings.intent.max_retry_before_failed:
+            await self._give_up(intent)
+            return False
+        if intent.kind is IntentKind.COMMAND:
+            intent.advance(IntentState.FAILED)
+            intent.last_error = "abandoned command requires manual reconciliation"
+            await self._ports.intents.save(intent)
+            return False
+        return await self._resume(intent)
+
+    async def _resume(self, intent: ProcessingIntent) -> bool:
         """Thử hoàn tất một intent, trả False nếu chưa xử lý được."""
         try:
-            document = await self._catalog.read_document(intent.document_id)
+            if intent.kind is IntentKind.STATUS_CHANGE:
+                await self._status_saga.resume(intent)
+                return True
+            document = await self._ports.catalog.read_document(intent.document_id)
             version = self._snapshot.from_payload(intent.payload)
             metadata = self._builder.build(document, version)
             return await self._saga.resume(intent, metadata)
         except DomainError as error:
             intent.register_retry(str(error))
-            await self._intents.save(intent)
+            await self._ports.intents.save(intent)
             _LOGGER.warning(
                 "intent recovery failed, will retry",
                 extra={"request_id": str(intent.request_id), "error": str(error)},
             )
             return False
 
-    async def _give_up(self, intent: UploadIntent) -> None:
+    async def _give_up(self, intent: ProcessingIntent) -> None:
         """Đánh dấu Failed và cảnh báo khi vượt ngưỡng retry."""
         intent.state = IntentState.FAILED
         intent.last_error = f"retry limit exceeded at {intent.retry_count} attempts"
-        await self._intents.save(intent)
+        await self._ports.intents.save(intent)
         _LOGGER.error(
             "intent exceeded the retry limit, manual intervention needed",
             extra={
@@ -186,12 +202,7 @@ class ReconcileRunner:
         self._container = container or ServiceContainer()
         ports = self._container.ports
         self._settings = self._container.settings
-        self._recovery = IntentRecoveryJob(
-            ports.intents,
-            UploadSaga(ports.objects, ports.catalog, ports.intents),
-            ports.catalog,
-            self._settings,
-        )
+        self._recovery = IntentRecoveryJob(ports, self._settings)
         self._orphans = OrphanObjectScanner(
             ports.objects, ports.catalog, self._settings.storage.object_prefix
         )
@@ -199,9 +210,10 @@ class ReconcileRunner:
 
     async def run_once(self, document_ids: list[DocumentId] | None = None) -> ReconcileReport:
         """Chạy phục hồi intent, quét object mồ côi và entity lệch trạng thái."""
-        report = await self._recovery.run_once()
+        touched = set(document_ids or [])
+        report = await self._recovery.run_once(touched)
         report.orphan_objects = await self._orphans.scan()
-        report.dangling_documents = await self._dangling.scan(document_ids or [])
+        report.dangling_documents = await self._dangling.scan(list(touched))
         _LOGGER.info("reconciliation finished", extra=report.as_payload())
         return report
 

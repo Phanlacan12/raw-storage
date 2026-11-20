@@ -18,4 +18,3 @@ security:
   require_idempotency_key: true
   # TTL cache policy, cũng là hạn dùng của chế độ DOWNLOAD_ONLY (mục 10.4)
   policy_cache_ttl_seconds: 300
-  lock_timeout_seconds: 5.0

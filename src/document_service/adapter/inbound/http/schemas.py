@@ -7,6 +7,8 @@ hay sản phẩm catalog không được làm vỡ hợp đồng này.
 
 from __future__ import annotations
 
+from typing import Generic, TypeVar
+
 from pydantic import BaseModel, Field
 
 from document_service.domain.dto import DownloadGrant, SearchPage
@@ -17,7 +19,16 @@ from document_service.domain.model import (
     DocumentVersion,
     Relationship,
 )
-from document_service.domain.value import DocumentStatus, RelationType
+from document_service.domain.value import Direction, DocumentStatus, RelationType
+
+T = TypeVar("T")
+
+
+class PageResponse(BaseModel, Generic[T]):
+    """Danh sách kết quả và con trỏ trang kế."""
+
+    items: list[T]
+    next_cursor: str | None
 
 
 class AccessPolicyPayload(BaseModel):
@@ -141,11 +152,13 @@ class RelationshipResponse(BaseModel):
     relation_type: RelationType
     source_version_id: str
     target_version_id: str
+    direction: Direction
 
     @classmethod
-    def from_domain(cls, relationship: Relationship) -> RelationshipResponse:
+    def from_domain(cls, relationship: Relationship, direction: Direction) -> RelationshipResponse:
         """Dựng response từ Relationship."""
         return cls(
+            direction=direction,
             relation_type=relationship.relation_type,
             source_version_id=str(relationship.source_version_id),
             target_version_id=str(relationship.target_version_id),
@@ -170,6 +183,7 @@ class SearchResponse(BaseModel):
     hits: list[SearchHitResponse]
     next_cursor: str | None = None
     total_hits: int = 0
+    visible_hits: int = 0
 
     @classmethod
     def from_domain(cls, page: SearchPage) -> SearchResponse:
@@ -189,6 +203,7 @@ class SearchResponse(BaseModel):
             ],
             next_cursor=page.next_cursor,
             total_hits=page.total_hits,
+            visible_hits=page.visible_hits,
         )
 
 

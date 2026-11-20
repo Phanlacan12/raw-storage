@@ -1,0 +1,53 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 563 >>
+stream
+BT
+/F2 14 Tf
+72 780 Td
+(Software Requirements Specification - Project A - v2.0) Tj
+ET
+BT
+/F1 11 Tf
+72 740 Td
+16 TL
+(1. Purpose) Tj T*
+(   Derived from URD v1.2. Supersedes SRS v1.0.) Tj T*
+(2. Functional requirements) Tj T*
+(   FR-01  Upload a document version and store its bytes in object storage.) Tj T*
+(   FR-02  Register metadata of every version in the catalog.) Tj T*
+(   FR-03  Approve a version and mark it as the current one.) Tj T*
+(3. Non functional requirements) Tj T*
+(   NFR-01 An upload must survive a catalog outage and be recoverable.) Tj T*
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+6 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>
+endobj
+xref
+0 7
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000251 00000 n 
+0000000865 00000 n 
+0000000962 00000 n 
+trailer
+<< /Size 7 /Root 1 0 R >>
+startxref
+1064
+%%EOF

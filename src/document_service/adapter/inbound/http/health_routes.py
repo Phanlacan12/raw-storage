@@ -38,7 +38,7 @@ async def readyz(container: ContainerDep) -> JSONResponse:
     """Tổng hợp health và cập nhật chế độ phục vụ."""
     timeout = container.settings.health.probe_timeout_seconds
     report = await container.health.readiness(timeout)
-    container.gate.update(report.mode)
+    container.gate.update(report.mode, report.download_ready)
     status = 200 if report.ready else 503
     return JSONResponse(status_code=status, content={"mode": str(report.mode)})
 
@@ -50,5 +50,5 @@ async def health_details(container: ContainerDep) -> Any:
         return JSONResponse(status_code=404, content={"error": "disabled"})
     timeout = container.settings.health.probe_timeout_seconds
     report = await container.health.details(timeout)
-    container.gate.update(report.mode)
+    container.gate.update(report.mode, report.download_ready)
     return report.as_payload()

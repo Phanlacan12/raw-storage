@@ -7,13 +7,14 @@ adapter tương ứng: IdP và hàng đợi đối soát.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from datetime import timedelta
 
 from document_service.domain.port import IntentStorePort
 from document_service.infrastructure.health import (
     DependencyKind,
     HealthIndicator,
-    HealthProbe,
+    HealthProbeMixin,
     HealthResult,
 )
 from document_service.utils.clock import utc_now
@@ -26,10 +27,14 @@ class AdapterHealthIndicator(HealthIndicator):
     `_probe_dependency()`, không phải sửa lớp health hay registry.
     """
 
-    def __init__(self, probe: HealthProbe) -> None:
+    def __init__(self, probe: HealthProbeMixin) -> None:
         """Nhận adapter đóng vai HealthProbe."""
-        super().__init__(probe.dependency_name, probe.dependency_kind)
+        super().__init__(probe.dependency_name, probe.dependency_kind, probe.extra_kinds)
         self._probe_target = probe
+
+    def invalidate_cache(self) -> None:
+        """Buộc lần tra chi tiết tiếp theo lấy số liệu trực tiếp."""
+        self._probe_target.invalidate_health_cache()
 
     async def _probe(self) -> HealthResult:
         """Gọi check_health của adapter."""
@@ -39,18 +44,18 @@ class AdapterHealthIndicator(HealthIndicator):
 class IdpHealthIndicator(HealthIndicator):
     """Kiểm tra JWKS của IdP, dùng được bản cache trong thời hạn."""
 
-    def __init__(self, jwks_available: bool = True) -> None:
+    def __init__(self, jwks_available: Callable[[], Awaitable[bool]]) -> None:
         """Nhận trạng thái JWKS do lớp security cung cấp."""
-        super().__init__("idp", DependencyKind.REQUIRED_FOR_READ)
+        super().__init__(
+            "idp",
+            DependencyKind.REQUIRED_FOR_READ,
+            frozenset({DependencyKind.REQUIRED_FOR_DOWNLOAD}),
+        )
         self._jwks_available = jwks_available
-
-    def update_jwks_state(self, available: bool) -> None:
-        """Cập nhật trạng thái JWKS sau mỗi lần làm mới."""
-        self._jwks_available = available
 
     async def _probe(self) -> HealthResult:
         """JWKS còn hiệu lực hay không."""
-        return self._up() if self._jwks_available else self._degraded("JWKS served from cache")
+        return self._up() if await self._jwks_available() else self._down("JWKS unavailable")
 
 
 class ReconcileBacklogIndicator(HealthIndicator):

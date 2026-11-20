@@ -2,6 +2,22 @@
 
 Sáu ví dụ đầu chạy với profile `fake`, **không cần hạ tầng**: không OpenMetadata, không Object Storage, không database. Ví dụ 07 cần hạ tầng thật và tự in hướng dẫn nếu thiếu biến môi trường.
 
+## File PDF mẫu
+
+[fixtures/](fixtures/) chứa năm PDF thật (mỗi file hơn 1 KB, mở được bằng trình đọc PDF bất kỳ) dùng cho ví dụ 08. Chúng được commit sẵn nên bình thường không phải sinh lại. Muốn đổi nội dung:
+
+```bash
+uv run python examples/fixtures/generate_pdfs.py
+```
+
+Script tự viết cấu trúc PDF 1.4, không kéo thêm dependency nào — ví dụ chỉ cần file PDF hợp lệ để chứng minh service xử lý đúng nội dung nhị phân, không cần trình bày đẹp.
+
+Ví dụ 07 mặc định tự sinh nội dung upload. Muốn đẩy một file có sẵn trên máy lên S3 thật:
+
+```bash
+DS_EXAMPLE_FILE=/duong/dan/toi/file.pdf uv run python examples/07_openmetadata_real.py
+```
+
 ## Chạy
 
 ```bash
@@ -25,7 +41,8 @@ Mỗi bước in `[OK  ]` hoặc `[SAI ]`; gặp `[SAI ]` thì ví dụ dừng v
 | [04_health_and_degraded.py](04_health_and_degraded.py) | `/livez` không đổi khi phụ thuộc sập, `/readyz` chuyển `ServiceMode`, API ghi trả `503` + `Retry-After` | `c4-04b` mục 10 |
 | [05_source_sync.py](05_source_sync.py) | Đồng bộ từ thư mục giả làm file share; sửa file ở nguồn tạo phiên bản mới | D17, POC-12 |
 | [06_outbox_events.py](06_outbox_events.py) | Outbox bền vững + webhook receiver thật: downstream lỗi thì sự kiện không mất | POC-11, `c4-04b` mục 11.7 |
-| [07_openmetadata_real.py](07_openmetadata_real.py) | Chạy trên OpenMetadata + Object Storage thật, đo được POC-19 | POC-19, POC-20, POC-22 |
+| [07_openmetadata_real.py](07_openmetadata_real.py) | Chạy trên OpenMetadata + Object Storage **thật**: upload file thật → duyệt → tải lại qua presigned URL và đối chiếu checksum; đo được POC-19 | POC-19, POC-20, POC-22 |
+| [08_project_documents_real.py](08_project_documents_real.py) | Ví dụ 02 chạy lại trên hạ tầng **thật** với **PDF thật** trong [fixtures/](fixtures/): URD–SRS–SAD, quan hệ theo phiên bản, tải PDF về đối chiếu checksum | POC-05, POC-06, POC-09 |
 
 ## Hai ví dụ đáng đọc trước
 

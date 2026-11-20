@@ -7,11 +7,16 @@ vì custom property chưa đăng ký sẽ làm việc lọc metadata âm thầm 
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 import uvicorn
 from fastapi import FastAPI
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.types import ASGIApp
 
 from document_service.adapter.inbound.http import health_routes, routes
 from document_service.adapter.inbound.http.errors import install_error_handlers
@@ -19,9 +24,30 @@ from document_service.adapter.outbound.openmetadata.bootstrap import OmSchemaMig
 from document_service.adapter.outbound.openmetadata.client import OmHttpClient
 from document_service.config import AdapterProfile, get_settings
 from document_service.infrastructure.container import ServiceContainer
+from document_service.infrastructure.resilience.deadline import (
+    reset_request_deadline,
+    set_request_deadline,
+)
 from document_service.utils.logging_setup import get_logger
 
 _LOGGER = get_logger(__name__)
+
+
+class DeadlineMiddleware(BaseHTTPMiddleware):
+    """Đặt `request_deadline` ContextVar cho mọi request (X25)."""
+
+    def __init__(self, application: ASGIApp, budget_seconds: float) -> None:
+        """Nhận ứng dụng và ngân sách thời gian mỗi request."""
+        super().__init__(application)
+        self._budget_seconds = budget_seconds
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        """Set deadline trước khi vào route, reset sau khi response hoàn tất."""
+        token = set_request_deadline(self._budget_seconds)
+        try:
+            return await call_next(request)
+        finally:
+            reset_request_deadline(token)
 
 
 class ApplicationFactory:
@@ -40,10 +66,14 @@ class ApplicationFactory:
         """Dựng ứng dụng với router, handler lỗi và lifespan khởi động."""
         settings = self._container.settings
         application = FastAPI(
-            title="Document Service",
+            title=settings.app.service_name,
             version="0.1.0",
             description="Kho raw data dung chung: Object Storage S3 + OpenMetadata",
             lifespan=self._lifespan,
+        )
+        application.add_middleware(
+            DeadlineMiddleware,
+            budget_seconds=settings.app.request_budget_seconds,
         )
         install_error_handlers(application)
         application.include_router(routes.router, prefix=settings.app.api_prefix)
@@ -54,7 +84,9 @@ class ApplicationFactory:
     async def _lifespan(self, application: FastAPI) -> AsyncIterator[None]:
         """Chạy migration schema khi start, dọn tài nguyên khi stop."""
         del application
-        await self._run_startup()
+        await asyncio.wait_for(
+            self._run_startup(), self._container.settings.health.startup_deadline_seconds
+        )
         yield
         _LOGGER.info("service stopped")
 
@@ -66,8 +98,10 @@ class ApplicationFactory:
             _LOGGER.info("starting with the fake profile, skipping catalog migration")
             return
         client = OmHttpClient(settings.catalog, self._container.executor("catalog"))
-        await OmSchemaMigration(client, settings.catalog).run_on_startup()
-        await client.aclose()
+        try:
+            await OmSchemaMigration(client, settings.catalog).run_on_startup()
+        finally:
+            await client.aclose()
         self._container.health.mark_startup_done()
         _LOGGER.info("catalog schema migration complete")
 

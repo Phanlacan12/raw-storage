@@ -8,13 +8,33 @@ giao dịch của sản phẩm.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 
 from document_service.application.context import PolicySet, PortBundle
-from document_service.application.metadata_builder import CatalogMetadataBuilder
+from document_service.application.orchestration.status_change_saga import (
+    StatusChangePlan,
+    StatusChangeSaga,
+    StatusChangeSnapshot,
+)
 from document_service.application.usecase.base import AuditOutcome, AuditTarget, WriteUseCase
-from document_service.domain.errors import PolicyDeniedError
-from document_service.domain.model import ApprovalResult, DomainEvent, Principal
-from document_service.domain.value import Action, DocumentId, DocumentStatus, DocumentVersionId
+from document_service.domain.errors import (
+    ConcurrencyConflictError,
+    DependencyUnavailableError,
+    PolicyDeniedError,
+)
+from document_service.domain.metadata_builder import CatalogMetadataBuilder
+from document_service.domain.model import Principal, ProcessingIntent, TransitionResult
+from document_service.domain.value import (
+    Action,
+    DocumentId,
+    DocumentStatus,
+    DocumentVersionId,
+    IdempotencyKey,
+    IntentKind,
+    IntentState,
+    RequestId,
+)
+from document_service.utils.ids import UlidGenerator
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,9 +45,10 @@ class TransitionStatusCommand:
     version_id: DocumentVersionId
     target_status: DocumentStatus
     principal: Principal
+    idempotency_key: IdempotencyKey
 
 
-class ApproveVersionUseCase(WriteUseCase[TransitionStatusCommand, ApprovalResult]):
+class ApproveVersionUseCase(WriteUseCase[TransitionStatusCommand, TransitionResult]):
     """Chuyển trạng thái phiên bản và cập nhật bản hiện hành."""
 
     def __init__(
@@ -39,9 +60,10 @@ class ApproveVersionUseCase(WriteUseCase[TransitionStatusCommand, ApprovalResult
         """Dựng use case từ bundle port và tập policy."""
         super().__init__(ports)
         self._policies = policies
-        self._builder = builder or CatalogMetadataBuilder()
+        self._saga = StatusChangeSaga(ports, builder or CatalogMetadataBuilder())
+        self._snapshot = StatusChangeSnapshot()
 
-    async def execute(self, command: TransitionStatusCommand) -> ApprovalResult:
+    async def execute(self, command: TransitionStatusCommand) -> TransitionResult:
         """Kiểm tra quyền rồi chạy phần chuyển trạng thái trong khóa."""
         try:
             await self._authorize(
@@ -57,47 +79,55 @@ class ApproveVersionUseCase(WriteUseCase[TransitionStatusCommand, ApprovalResult
             raise
         return await self._run_exclusive(command.document_id, lambda: self._transition(command))
 
-    async def _transition(self, command: TransitionStatusCommand) -> ApprovalResult:
+    async def _transition(self, command: TransitionStatusCommand) -> TransitionResult:
         """Phần chạy trong khóa: đọc lại tài liệu, chuyển trạng thái, ghi catalog."""
+        previous = await self.ports.intents.find_by_idempotency_key(command.idempotency_key)
+        if previous is not None:
+            return self._replay(command, previous)
+        pending = await self.ports.intents.find_unfinished(timedelta(0), IntentKind.STATUS_CHANGE)
+        if any(intent.document_id == command.document_id for intent in pending):
+            raise ConcurrencyConflictError("another status change is awaiting recovery")
         document = await self.ports.catalog.read_document(command.document_id)
         result = self._policies.lifecycle.transition(
             document, command.version_id, command.target_status, command.principal.as_actor()
         )
-        await self.ports.catalog.patch_controlled_fields(
-            result.approved.version_id, {"status": str(result.approved.status)}
+        plan = StatusChangePlan(
+            result, str(document.current_version_id or ""), command.principal.principal_id
         )
-        if result.obsoleted is not None:
-            await self.ports.catalog.patch_controlled_fields(
-                result.obsoleted.version_id, {"status": str(result.obsoleted.status)}
-            )
-        await self.ports.catalog.patch_document_fields(
-            document.document_id, self._builder.document_fields(document)
+        intent = ProcessingIntent(
+            request_id=RequestId(UlidGenerator().new_id("REQ")),
+            idempotency_key=command.idempotency_key,
+            document_id=command.document_id,
+            version_id=command.version_id,
+            expected_checksum=None,
+            kind=IntentKind.STATUS_CHANGE,
+            state=IntentState.STATUS_CHANGE_PENDING,
+            payload=self._snapshot.to_payload(plan),
         )
-        await self._publish_transition(command, result)
+        await self.ports.intents.create(intent)
+        try:
+            await self._saga.resume(intent)
+        except DependencyUnavailableError as error:
+            intent.register_retry(str(error))
+            await self.ports.intents.save(intent)
+            raise
         return result
 
-    async def _publish_transition(
-        self, command: TransitionStatusCommand, result: ApprovalResult
-    ) -> None:
-        """Phát sự kiện và ghi audit cho lượt chuyển trạng thái."""
-        await self._publish(
-            DomainEvent(
-                event_type=f"version.{str(result.approved.status).lower()}",
-                document_id=command.document_id,
-                version_id=result.approved.version_id,
-                payload={"actor": command.principal.principal_id},
-            )
-        )
-        await self._record(
-            command.principal,
-            "version.status_changed",
-            AuditTarget.of_version(command.document_id, result.approved.version_id),
-            AuditOutcome.ok(f"-> {result.approved.status}"),
-        )
-        if result.obsoleted is not None:
-            await self._record(
-                command.principal,
-                "version.status_changed",
-                AuditTarget.of_version(command.document_id, result.obsoleted.version_id),
-                AuditOutcome.ok("-> Obsolete"),
-            )
+    def _replay(
+        self, command: TransitionStatusCommand, intent: ProcessingIntent
+    ) -> TransitionResult:
+        """Chỉ phát lại kết quả khi cùng tài liệu, phiên bản, người gọi và lệnh."""
+        if (
+            intent.kind is not IntentKind.STATUS_CHANGE
+            or intent.state is not IntentState.COMPLETED
+            or intent.document_id != command.document_id
+            or intent.version_id != command.version_id
+        ):
+            raise ConcurrencyConflictError("idempotency key conflicts with an existing operation")
+        plan = self._snapshot.from_payload(intent.payload)
+        if (
+            plan.result.changed.status != command.target_status
+            or plan.actor != command.principal.principal_id
+        ):
+            raise ConcurrencyConflictError("idempotency key belongs to another status change")
+        return plan.result

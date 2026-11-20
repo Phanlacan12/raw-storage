@@ -50,12 +50,14 @@ async def main() -> None:
     use_fake_profile()
     reset_container()
 
-    from document_service.adapter.outbound.observability.outbox import (
+    from document_service.adapter.outbound.observability.outbox_dispatcher import (
         OutboxDispatcher,
-        OutboxEventPublisher,
-        SqliteOutbox,
         WebhookEventSender,
     )
+    from document_service.adapter.outbound.observability.outbox_publisher import (
+        OutboxEventPublisher,
+    )
+    from document_service.adapter.outbound.observability.outbox_store import SqliteOutbox
     from document_service.adapter.outbound.sqlite_support import SqliteDatabase
     from document_service.config import DependencyResiliencePolicy, EventSettings
     from document_service.domain.model import DomainEvent

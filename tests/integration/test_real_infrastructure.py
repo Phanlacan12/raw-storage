@@ -114,7 +114,12 @@ class TestCatalogRoundTrip:
     async def test_search_filters_custom_properties(
         self, catalog: OpenMetadataCatalogAdapter, real_settings: Settings
     ) -> None:
-        """POC-19: lọc tổ hợp trên custom property qua Search API thật."""
+        """POC-19: lọc tổ hợp trên custom property qua Search API thật.
+
+        Cần stack đã chạy `make compose-ready` (hoặc `make compose-patch`): OpenMetadata
+        1.12.0 nguyên bản cấu hình sai loại `file` nên test này fail. Xem
+        deploy/patch_openmetadata.py.
+        """
         document_id = DocumentId("DOC-IT-0002")
         version_id = DocumentVersionId("VER-IT-0002")
         document = Document(

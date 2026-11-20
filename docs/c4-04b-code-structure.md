@@ -29,23 +29,24 @@ flowchart TB
 
     subgraph L1["adapter.inbound — D1, D2, D17"]
         direction LR
-        PKG1["http<br/>DocumentController · VersionController<br/>StatusController · RelationshipController<br/>DownloadController · SearchController<br/>AuditController"]
+        PKG1["http<br/>routes (documents · collections · versions · status<br/>relationships · download · search · policy<br/>retention · audit) · schemas · errors<br/>context · dependencies · upload_handler"]
         PKG2["security<br/>OidcTokenVerifier · PrincipalResolver<br/>IdempotencyKeyFilter"]
-        PKG3["sync<br/>SourceSyncScheduler · SourceSyncJob"]
-        PKG3B["health — mục 10<br/>HealthController · HealthCheckRegistry<br/>ReadinessPolicy · DegradedModeGate<br/>OpenMetadataHealthIndicator · ObjectStoreHealthIndicator<br/>IntentStoreHealthIndicator · IdpHealthIndicator<br/>LockHealthIndicator · ReconcileBacklogIndicator"]
+        PKG3["sync<br/>SourceSyncScheduler · SourceSyncJob<br/>FileSystemSourceConnector · SourcePermissionMapper"]
+        PKG3B["health — mục 10<br/>health_routes · HealthCheckRegistry<br/>ReadinessPolicy · DegradedModeGate<br/>AdapterHealthIndicator (một lớp cho mọi adapter)<br/>IdpHealthIndicator · ReconcileBacklogIndicator"]
     end
 
     subgraph L2["application — D4..D11, D14, D18"]
         direction LR
-        PKG4["usecase<br/>RegisterDocument · CreateVersion<br/>ApproveVersion · DeclareRelationship<br/>IssueDownload · SearchDocuments"]
-        PKG5["orchestration<br/>UploadSaga · IdempotencyGuard<br/>DocumentLockManager"]
+        PKG4["usecase<br/>RegisterDocument · CreateVersion<br/>ApproveVersion · DeclareRelationship<br/>QueryRelationships · IssueDownload<br/>SearchDocuments · UpdateAccessPolicy<br/>ListAudit · ManageCollection · ApplyRetention"]
+        PKG5["orchestration + wiring<br/>UploadSaga · IdempotencyGuard<br/>DocumentLockManager · VersionSnapshot<br/>UseCaseFactory · PortBundle<br/>CatalogMetadataBuilder"]
     end
 
     subgraph L3["domain — giữ bất biến I1..I14"]
         direction LR
         PKG6["model<br/>Document · DocumentVersion<br/>Collection · Relationship · AccessPolicy"]
         PKG7["value<br/>DocumentId · DocumentVersionId<br/>VersionLabel · Checksum · StorageUri<br/>IdempotencyKey · DocumentStatus"]
-        PKG8["policy<br/>VersionPolicy · LifecyclePolicy<br/>RelationshipPolicy · DedupPolicy"]
+        PKG8["policy<br/>VersionPolicy · LifecyclePolicy<br/>RelationshipPolicy · DedupPolicy<br/>MetadataSchemaPolicy · RetentionPolicy"]
+        PKG8B["metadata_fields · dto · errors<br/>danh sách trường bắt buộc và lọc được<br/>một nguồn duy nhất"]
     end
 
     subgraph L4["domain.port — interface thuần"]
@@ -57,7 +58,7 @@ flowchart TB
         direction TB
         PKG10["client<br/>OmHttpClient · OmAuthProvider (bot JWT)<br/>OmApiVersionPin · OmErrorTranslator"]
         PKG11["entity<br/>OmDirectoryMapper · OmFileEntityMapper<br/>OmExtensionMapper · OmFqnBuilder<br/>OmJsonPatchBuilder · OmEntityVersionGuard"]
-        PKG12["search<br/>OmSearchQueryBuilder · OmSearchResultMapper<br/>OmPermissionResultFilter"]
+        PKG12["search<br/>OmSearchQueryBuilder · OmSearchResultMapper"]
         PKG13["lineage<br/>OmLineageRelationshipStore"]
         PKG14["bootstrap<br/>OmDriveServiceProvisioner<br/>OmCustomPropertyRegistrar<br/>OmSchemaMigration"]
     end
@@ -65,19 +66,22 @@ flowchart TB
     subgraph L6["adapter.outbound khác — D13, D15, D16"]
         direction LR
         PKG15["storage<br/>S3ObjectStoreAdapter<br/>PresignedUrlIssuer · ProxyStreamer"]
-        PKG16["intent — Q2 còn mở<br/>S3ManifestIntentStore<br/>JdbcRegistryIntentStore"]
-        PKG17["relationship — Q4 còn mở<br/>JdbcRelationshipRegistry"]
-        PKG18["observability<br/>StructuredAuditLogger<br/>OutboxEventPublisher · MetricsRecorder"]
+        PKG16["intent — Q2 còn mở<br/>S3ManifestIntentStore<br/>SqliteRegistryIntentStore"]
+        PKG17["relationship — Q4 còn mở<br/>SqliteRelationshipRegistry"]
+        PKG18["observability<br/>StructuredAuditLogger · MetricsRecorder<br/>SqliteOutbox · OutboxEventPublisher<br/>WebhookEventSender · OutboxDispatcher"]
+        PKG18B["policy<br/>CachingPolicyDecision"]
+        PKG18C["fake — chỉ dùng cho test và profile fake<br/>InMemoryCatalog · InMemoryObjectStore<br/>InMemoryIntentStore · InMemoryRelationshipStore<br/>InMemoryDocumentLock · InMemoryAuditLog"]
+        PKG18D["sqlite_support<br/>SqliteDatabase + 4 schema của C7"]
     end
 
-    subgraph L7["worker — C8"]
-        PKG19["reconcile<br/>IntentRecoveryJob · OrphanObjectScanner<br/>DanglingEntityScanner"]
+    subgraph L7["worker — C8 và C10, tiến trình riêng"]
+        PKG19["reconcile<br/>ReconcileRunner · IntentRecoveryJob<br/>OrphanObjectScanner · DanglingEntityScanner"]
     end
 
     subgraph L8["infrastructure — mục 11, dùng chung cho mọi adapter ra ngoài"]
-        PKG20["resilience<br/>ResilientCallExecutor · RetryPolicy<br/>BackoffCalculator · RetryBudget<br/>CircuitBreaker · Bulkhead<br/>TimeoutPolicy · Deadline · ConnectionPool"]
+        PKG20["resilience<br/>ResilientCallExecutor · ExecutorRegistry<br/>RetryPolicy · BackoffStrategy<br/>FullJitterBackoff · FixedBackoff · RetryBudget<br/>CircuitBreaker · Bulkhead<br/>TimeoutPolicy · Deadline · ClassifiedError"]
         PKG21["container<br/>ServiceContainer — điểm wiring duy nhất"]
-        PKG21B["health<br/>HealthProbe · HealthIndicator<br/>HealthResult · HealthStatus<br/>DependencyKind · ServiceMode"]
+        PKG21B["health<br/>HealthProbe · HealthProbeMixin<br/>HealthIndicator · HealthResult · HealthReport<br/>HealthStatus · DependencyKind · ServiceMode"]
     end
 
     subgraph L9["utils — mục 2.1, tiện ích kỹ thuật thuần, chỉ dùng stdlib"]
@@ -112,7 +116,7 @@ flowchart TB
     class L9 dom
 ```
 
-**Cấu hình nằm ngoài mã nguồn:** mọi tham số đọc được của hệ thống nằm ở `configs/*.yml` ở thư mục gốc, chia theo khối — `app`, `logging`, `catalog`, `storage`, `intent_store`, `relationship_store`, `security`, `resilience`, `health`. `config.py` nạp chúng với thứ tự ưu tiên **init → biến môi trường (`DS_`, lồng nhau bằng `__`) → `.env` → YAML → mặc định trong code**. Bí mật (bot token của OpenMetadata, khóa S3) **không** đặt trong YAML, chỉ truyền qua biến môi trường. Bảng tham số ở mục 11.3 là nội dung của `configs/resilience.yml`, không phải hằng số trong code.
+**Cấu hình nằm ngoài mã nguồn:** mọi tham số đọc được của hệ thống nằm ở `configs/*.yml` ở thư mục gốc, chia theo khối — `app`, `logging`, `catalog`, `storage`, `intent_store`, `relationship_store`, `security`, `resilience`, `health`, `events` (outbox và webhook downstream), `sync` (nguồn, chu kỳ, ánh xạ quyền). `config.py` nạp chúng với thứ tự ưu tiên **init → biến môi trường (`DS_`, lồng nhau bằng `__`) → `.env` → YAML → mặc định trong code**. Bí mật (bot token của OpenMetadata, khóa S3) **không** đặt trong YAML, chỉ truyền qua biến môi trường. Bảng tham số ở mục 11.3 là nội dung của `configs/resilience.yml`, không phải hằng số trong code.
 
 **Quy tắc phụ thuộc bắt buộc:** `domain` và `domain.port` **không import** SDK hay model của OpenMetadata, không import AWS SDK. Chỉ package `adapter.outbound.openmetadata` được biết tới khái niệm `Directory`, `File`, `extension`, `fullyQualifiedName`. `utils` không import bất kỳ package nào khác của service. CI phải chặn vi phạm bằng một test kiểm tra phụ thuộc (AST hoặc import-linter).
 
@@ -122,7 +126,7 @@ flowchart TB
 
 | Module | Nội dung | Ai dùng |
 |---|---|---|
-| `singleton` | `SingletonMeta` có `threading.Lock`, `clear()`, `has_instance()` | `ServiceContainer`, `OmHttpClient`, `CircuitBreaker`, `HealthCheckRegistry`, `LoggingConfigurator` |
+| `singleton` | `SingletonMeta` có `threading.RLock` (khóa **phải** reentrant: `ServiceContainer.__init__` tạo tiếp đối tượng khác khi đang giữ khóa, dùng `Lock` là deadlock lúc khởi động), `clear()`, `has_instance()` | `ServiceContainer`, `OmHttpClient`, `CircuitBreaker`, `HealthCheckRegistry`, `LoggingConfigurator` |
 | `clock` | `utc_now`, `Clock`, `SystemClock`, `FixedClock` | model nghiệp vụ, intent store, breaker, test thời gian |
 | `ids` | `IdGenerator`, `UlidGenerator`, `SequentialIdGenerator` | `VersionPolicy` sinh `document_version_id`, `request_id` |
 | `hashing` | `StreamingHasher`, `digest_of` | D4 Upload Handler, D5 Dedup, job đối soát toàn vẹn |
@@ -197,6 +201,8 @@ classDiagram
     class RegisterDocumentUseCase
     class DeclareRelationshipUseCase
     class UpdateAccessPolicyUseCase
+    class ManageCollectionUseCase
+    class ApplyRetentionUseCase
     class SearchDocumentsUseCase
     class QueryRelationshipsUseCase
     class IssueDownloadUseCase
@@ -209,6 +215,8 @@ classDiagram
     WriteUseCase <|-- RegisterDocumentUseCase
     WriteUseCase <|-- DeclareRelationshipUseCase
     WriteUseCase <|-- UpdateAccessPolicyUseCase
+    WriteUseCase <|-- ManageCollectionUseCase
+    WriteUseCase <|-- ApplyRetentionUseCase
     ReadUseCase <|-- SearchDocumentsUseCase
     ReadUseCase <|-- QueryRelationshipsUseCase
     ReadUseCase <|-- IssueDownloadUseCase
@@ -223,16 +231,20 @@ classDiagram
     class LifecyclePolicy
     class RelationshipPolicy
     class DedupPolicy
+    class MetadataSchemaPolicy
+    class RetentionPolicy
 
     DomainPolicy <|-- VersionPolicy
     DomainPolicy <|-- LifecyclePolicy
     DomainPolicy <|-- RelationshipPolicy
     DomainPolicy <|-- DedupPolicy
+    DomainPolicy <|-- MetadataSchemaPolicy
+    DomainPolicy <|-- RetentionPolicy
 
     class OutboundAdapter {
         <<abstract>>
         #call(operation, deadline)
-        +ping()
+        #probe_dependency() HealthResult
     }
     class HealthIndicator {
         <<abstract>>
@@ -259,10 +271,10 @@ classDiagram
 | Base class | Nơi đặt | Hành vi dùng chung đặt ở base | Lớp con |
 |---|---|---|---|
 | 8 port | `domain/port.py` | chỉ chữ ký trừu tượng — domain không giữ hành vi hạ tầng | adapter thật và fake |
-| `UseCase` → `ReadUseCase`, `WriteUseCase` | `application/usecase/base.py` | `_authorize`, `_audit`, `_publish`; nhánh write thêm `_run_exclusive` qua `DocumentLockManager` | 9 use case |
-| `DomainPolicy` | `domain/policy.py` | `_require` phát đúng loại lỗi miền, `policy_name` cho log | 4 policy |
-| `OutboundAdapter` | `adapter/outbound/base.py` | giữ `ResilientCallExecutor` và logger, `_call()` bọc mọi lời gọi ra ngoài | adapter OpenMetadata, S3, intent, relationship, outbox |
-| `HealthIndicator` | `adapter/inbound/health/base.py` | cache theo TTL, đo độ trễ, bọc timeout, đọc trạng thái breaker | 6 indicator |
+| `UseCase` → `ReadUseCase`, `WriteUseCase` | `application/usecase/base.py` | `_authorize`, `_record`, `_publish`; nhánh write thêm `_run_exclusive` qua `DocumentLockManager` | 11 use case |
+| `DomainPolicy` | `domain/policy.py` | `_require` phát đúng loại lỗi miền, `policy_name` cho log | 6 policy |
+| `OutboundAdapter` | `adapter/outbound/base.py` | giữ `ResilientCallExecutor` và logger, `_call()` bọc mọi lời gọi ra ngoài, `_probe_dependency()` cho health | adapter OpenMetadata, S3, intent, relationship, audit, outbox |
+| `HealthIndicator` | `infrastructure/health.py`, hiện thực ở `adapter/inbound/health/` | cache theo TTL, đo độ trễ, bọc timeout, đọc trạng thái breaker. **Một lớp `AdapterHealthIndicator` dùng chung** cho mọi adapter có `_probe_dependency()`, thay vì một lớp cho mỗi phụ thuộc; chỉ IdP và backlog đối soát cần indicator riêng | `AdapterHealthIndicator`, `IdpHealthIndicator`, `ReconcileBacklogIndicator` |
 | `BackoffStrategy` | `infrastructure/resilience/retry.py` | `jittered_delay` dựng trên `next_delay` của lớp con | `FullJitterBackoff`, `FixedBackoff` |
 | `DomainError` | `domain/errors.py` | phân cấp lỗi để lớp inbound dịch sang mã HTTP theo nhánh cây | 11 lỗi nghiệp vụ |
 
@@ -339,13 +351,25 @@ classDiagram
         +validate(Relationship)
         +assertTargetNotRebound(Relationship)
     }
+    class MetadataSchemaPolicy {
+        <<domain service>>
+        +assertRequiredPresent(string, Metadata)
+        +filterableFields(string) List~string~
+    }
+    class RetentionPolicy {
+        <<domain service>>
+        +expiresAt(Document) Instant
+        +assertAuditPreserved(DeleteRequest)
+    }
 
     class MetadataCatalogPort {
         <<abstract>>
         +ensureCollection(Collection) EntityRef
+        +findCollection(string) Collection
         +registerDocument(Document) EntityRef
         +registerVersion(DocumentVersion, Metadata) EntityRef
-        +patchControlledFields(DocumentVersionId, Map~string,object~) void
+        +patchControlledFields(DocumentId, DocumentVersionId, Map) void
+        +patchDocumentFields(DocumentId, Map) void
         +readDocument(DocumentId) Document
         +listVersions(DocumentId) List~DocumentVersion~
         +search(SearchQuery) SearchPage
@@ -353,12 +377,13 @@ classDiagram
     class RelationshipStorePort {
         <<abstract>>
         +upsert(Relationship) void
-        +query(DocumentVersionId, Direction, RelationType) List~Relationship~
+        +query(DocumentVersionId, Direction, RelationType, PageRequest) List~RelatedEdge~
         +remove(Relationship) void
     }
     class ObjectStorePort {
         <<abstract>>
         +putImmutable(StorageUri, Stream, Checksum) PutResult
+        +putOverwrite(StorageUri, bytes, string) PutResult
         +head(StorageUri) ObjectInfo
         +presign(StorageUri, Duration) Url
         +openStream(StorageUri) Stream
@@ -366,15 +391,18 @@ classDiagram
     }
     class IntentStorePort {
         <<abstract>>
-        +create(UploadIntent) void
+        +create(ProcessingIntent) void
         +advance(RequestId, IntentState) void
-        +findByIdempotencyKey(IdempotencyKey) UploadIntent
-        +findUnfinished(Duration) List~UploadIntent~
+        +save(ProcessingIntent) void
+        +findByIdempotencyKey(IdempotencyKey) ProcessingIntent
+        +findByRequestId(RequestId) ProcessingIntent
+        +findUnfinished(Duration, IntentKind) List~ProcessingIntent~
     }
     class PolicyDecisionPort {
         <<abstract>>
         +decide(Principal, Action, ResourceRef) Decision
         +effectivePolicy(DocumentId) AccessPolicy
+        +invalidate(DocumentId) void
     }
     class DocumentLockPort {
         <<abstract>>
@@ -387,6 +415,7 @@ classDiagram
     class AuditPort {
         <<abstract>>
         +record(AuditEvent) void
+        +listForDocument(DocumentId, PageRequest) Page~AuditEvent~
     }
 
     Document "1" *-- "1..*" DocumentVersion
@@ -397,6 +426,12 @@ classDiagram
     LifecyclePolicy ..> Document
     RelationshipPolicy ..> Relationship
 ```
+
+Ba điểm về chữ ký port, khác bản vẽ trước ngày 19/11/2026 và khớp mã nguồn:
+
+1. `patchControlledFields` nhận **cả** `document_id` và `document_version_id`. Thiếu `document_id` thì adapter không dựng được FQN và phải tra qua Search API — mà index có độ trễ, nên duyệt một phiên bản vừa tạo sẽ không tìm thấy.
+2. `patchDocumentFields` là method riêng cho các trường ở mức tài liệu (`current_version_id`, `access_policy`, `retention_policy`), không gộp vào method của phiên bản.
+3. `putOverwrite` tồn tại **chỉ** cho dữ liệu điều phối của service (manifest intent). Raw file của tài liệu **luôn** đi qua `putImmutable` (bất biến I3).
 
 Tám port là abstract base class (xem mục 2.2). `RelationshipStorePort` được **tách khỏi** `MetadataCatalogPort` vì đây là điểm rủi ro cao nhất (POC-06, 09): nếu Lineage API của OpenMetadata không truy vấn ngược được theo `relation_type` cho File entity, chỉ cần đổi binding sang registry, không sửa use case.
 
@@ -423,7 +458,8 @@ classDiagram
         -OmSearchQueryBuilder queryBuilder
         -OmSearchResultMapper resultMapper
         +registerVersion(DocumentVersion, Metadata) EntityRef
-        +patchControlledFields(DocumentVersionId, Map) void
+        +patchControlledFields(DocumentId, DocumentVersionId, Map) void
+        +patchDocumentFields(DocumentId, Map) void
         +readDocument(DocumentId) Document
         +search(SearchQuery) SearchPage
     }
@@ -476,8 +512,8 @@ classDiagram
         +build() JsonPatch
     }
     class OmEntityVersionGuard {
-        +capture(JsonNode) EntityVersion
-        +assertUnchanged(EntityVersion, JsonNode)
+        +capture(JsonNode) float
+        +changedUnexpectedly(float, JsonNode) bool
     }
     class OmSearchQueryBuilder {
         +build(SearchQuery) QueryFilter
@@ -487,19 +523,14 @@ classDiagram
     class OmSearchResultMapper {
         +toPage(JsonNode) SearchPage
     }
-    class OmPermissionResultFilter {
-        -PolicyDecisionPort policies
-        +filter(SearchPage, Principal) SearchPage
-    }
-
     class OmLineageRelationshipStore {
         -OmHttpClient http
         -OmFqnBuilder fqn
         +upsert(Relationship) void
         +query(DocumentVersionId, Direction, RelationType) List~Relationship~
     }
-    class JdbcRelationshipRegistry {
-        -DataSource ds
+    class SqliteRelationshipRegistry {
+        -SqliteDatabase db
         +upsert(Relationship) void
         +query(DocumentVersionId, Direction, RelationType) List~Relationship~
     }
@@ -518,7 +549,7 @@ classDiagram
 
     MetadataCatalogPort <|.. OpenMetadataCatalogAdapter
     RelationshipStorePort <|.. OmLineageRelationshipStore
-    RelationshipStorePort <|.. JdbcRelationshipRegistry
+    RelationshipStorePort <|.. SqliteRelationshipRegistry
 
     OpenMetadataCatalogAdapter --> OmHttpClient
     OpenMetadataCatalogAdapter --> OmDirectoryMapper
@@ -536,7 +567,6 @@ classDiagram
     OmFileEntityMapper --> OmExtensionMapper
     OmLineageRelationshipStore --> OmHttpClient
     OmSearchQueryBuilder --> OmExtensionMapper
-    OmPermissionResultFilter ..> OmSearchResultMapper
     OmSchemaMigration --> OmDriveServiceProvisioner
     OmSchemaMigration --> OmCustomPropertyRegistrar
 ```
@@ -554,25 +584,26 @@ Bảng dưới là **hợp đồng cần đối chiếu với OpenAPI của phi�
 | Metadata mở rộng | `extension` theo custom property đã đăng ký | `PATCH /api/v1/drives/files/{id}` dạng JSON Patch | `OmExtensionMapper`, `OmJsonPatchBuilder` |
 | Định nghĩa custom property | Custom property trên entity type | `PATCH /api/v1/metadata/types/{id}` | `OmCustomPropertyRegistrar` |
 | `derived_from` | Lineage edge giữa hai File entity | `PUT /api/v1/lineage`, `GET /api/v1/lineage/...` | `OmLineageRelationshipStore` |
-| `references`, `supersedes` | Lineage có `lineageDetails`, hoặc registry ngoài | như trên hoặc bảng registry | `OmLineageRelationshipStore` / `JdbcRelationshipRegistry` |
+| `references`, `supersedes` | Lineage có `lineageDetails`, hoặc registry ngoài | như trên hoặc bảng registry | `OmLineageRelationshipStore` / `SqliteRelationshipRegistry` |
 | Tìm kiếm theo metadata | Search index | `GET /api/v1/search/query` với `query_filter` trên `extension.<field>` | `OmSearchQueryBuilder` |
 | Lịch sử metadata | Entity version của OpenMetadata | `GET /api/v1/drives/files/{id}/versions` | `OpenMetadataCatalogAdapter` |
 | Service account của Document Service | Bot user + JWT | cấu hình, không gọi lúc chạy | `OmAuthProvider` |
 | File gốc | **Không** nằm trong OpenMetadata | S3 API | `S3ObjectStoreAdapter` |
-| UploadIntent, Audit của Document Service | **Không** nằm trong OpenMetadata | C7 + log | `IntentStorePort`, `AuditPort` |
+| ProcessingIntent, Audit của Document Service | **Không** nằm trong OpenMetadata | C7 + log | `IntentStorePort`, `AuditPort` |
 
 Ba điểm khác biệt so với mô hình trung tính trước đây, phải phản ánh đúng trong code:
 
 1. **`version` của File entity là lịch sử metadata, không phải phiên bản nội dung.** `OmEntityVersionGuard` chỉ dùng trường này để phát hiện ghi đè đồng thời, **không** dùng làm `version_label`.
-2. **OpenMetadata không có If-Match/ETag.** Mọi thao tác cần tuần tự hóa phải nằm trong `DocumentLockPort.withLock(documentId, ...)`; `OmEntityVersionGuard` chỉ là lớp phát hiện xung đột thứ hai, không thay khóa.
-3. **Custom property chỉ có nghĩa khi đã đăng ký trước.** `OmSchemaMigration.runOnStartup()` phải chạy `OmCustomPropertyRegistrar.ensureProperties(...)` và `assertFilterable(...)` cho `document_type`, `status`, `classification`, `collection_id`, `version_label`; service **fail fast** nếu thiếu, không âm thầm ghi `extension` không lọc được.
+2. **OpenMetadata không có If-Match/ETag.** Mọi thao tác cần tuần tự hóa phải nằm trong `DocumentLockPort.withLock(documentId, ...)`; `OmEntityVersionGuard` chỉ là lớp phát hiện xung đột thứ hai, không thay khóa. Giới hạn của lớp này phải được nói rõ: so sánh `version` trước và sau một lệnh `PATCH` chỉ phát hiện được trường hợp số version **tụt**; hai lệnh `PATCH` đồng thời đều làm version **tăng**, nên không phát hiện được bằng cách so sánh này. Tuần tự hoá thật sự là việc của `DocumentLockPort`, và POC-22 phải được tính là đạt nhờ khóa, không nhờ guard.
+3. **Lọc quyền kết quả tra cứu là quy tắc nghiệp vụ, không phải chi tiết adapter.** Nó nằm ở `SearchPage.filtered(principal, action)` trong `domain`, nên mọi adapter catalog đều chịu cùng một quy tắc và test được không cần dựng catalog. Bản vẽ trước ngày 19/11/2026 đặt việc này ở một lớp `OmPermissionResultFilter` trong adapter OpenMetadata — sai lớp. B19/11 đã chuyển quy tắc từ adapter (`OmPermissionResultFilter`) sang domain (`SearchPage.filtered`), vì đổi sản phẩm catalog không được làm mất quy tắc phân quyền.
+4. **Custom property chỉ có nghĩa khi đã đăng ký trước.** `OmSchemaMigration.runOnStartup()` phải chạy `OmCustomPropertyRegistrar.ensureProperties(...)` và `assertFilterable(...)` cho `document_type`, `status`, `classification`, `collection_id`, `version_label`; service **fail fast** nếu thiếu, không âm thầm ghi `extension` không lọc được.
 
 ## 6. Luồng gọi ở mức lớp — tạo phiên bản mới trên OpenMetadata
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant CT as VersionController
+    participant CT as routes.create_version
     participant GU as IdempotencyGuard
     participant UC as CreateVersionUseCase
     participant LK as DocumentLockPort
@@ -583,7 +614,7 @@ sequenceDiagram
     participant OM as OpenMetadata REST API
     participant EV as EventPublisherPort
 
-    CT->>GU: runOnce(idempotencyKey, cmd)
+    CT->>GU: inspect(idempotencyKey)
     GU->>IN: findByIdempotencyKey(key)
     alt Đã có intent Completed
         IN-->>GU: intent Completed
@@ -599,9 +630,10 @@ sequenceDiagram
         VP-->>UC: ok hoặc DuplicateContentException (I8)
         UC->>VP: nextVersion(document, uploadRequest)
         VP-->>UC: DocumentVersion Draft + DocumentVersionId (I1, I2)
-        UC->>IN: create(UploadIntent Received)
+        UC->>IN: create(ProcessingIntent Received)
         UC->>OS: putImmutable(storageUri, stream, checksum)
-        OS-->>UC: PutResult + checksum thực tế
+        OS-->>UC: PutResult + checksum thực tế đọc lại từ storage
+        UC->>UC: đối chiếu checksum thực tế với expectedChecksum, lệch thì RetryPending (I10)
         UC->>IN: advance(requestId, ObjectStored)
         UC->>AD: registerVersion(version, metadata)
         AD->>AD: OmFileEntityMapper.toFileRequest + OmExtensionMapper.toExtension
@@ -615,20 +647,21 @@ sequenceDiagram
     end
 ```
 
-Khi bất kỳ bước nào từ `create(UploadIntent)` trở đi thất bại, `IntentRecoveryJob.runOnce()` gọi `UploadSaga.resume(intent)` với **cùng** `DocumentVersionId` và `IdempotencyKey`; `PUT /api/v1/drives/files` theo FQN cố định là thao tác idempotent nên retry không sinh entity trùng — xem [luồng 7 ở c4-05](c4-05-dynamic-views.md#7-phục-hồi-sau-lỗi-một-phía).
+Khi bất kỳ bước nào từ `create(ProcessingIntent)` trở đi thất bại, `IntentRecoveryJob.runOnce()` gọi `UploadSaga.resume(intent)` với **cùng** `DocumentVersionId` và `IdempotencyKey`; `PUT /api/v1/drives/files` theo FQN cố định là thao tác idempotent nên retry không sinh entity trùng — xem [luồng 7 ở c4-05](c4-05-dynamic-views.md#7-phục-hồi-sau-lỗi-một-phía).
 
 ## 7. Luồng gọi ở mức lớp — duyệt phiên bản
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant CT as StatusController
+    participant CT as routes.transition_status
     participant UC as ApproveVersionUseCase
     participant LK as DocumentLockPort
     participant LP as LifecyclePolicy
     participant AD as OpenMetadataCatalogAdapter
     participant VG as OmEntityVersionGuard
     participant OM as OpenMetadata REST API
+    participant IN as IntentStorePort
     participant AU as AuditPort
 
     CT->>UC: execute(ApproveCommand v2.0)
@@ -640,15 +673,17 @@ sequenceDiagram
     UC->>LP: assertAtMostOneApproved(document)
     UC->>LP: transition(v2.0, Approved, actor)
     LP-->>UC: ok (I4, I5)
+    UC->>IN: create/advance intent StatusChangePending
     UC->>AD: patchControlledFields(v2.0, status=Approved)
     AD->>VG: capture(entity hiện tại)
     AD->>OM: PATCH /api/v1/drives/files/{v2.0} json-patch replace extension.status
     OM-->>AD: entity version tăng
-    AD->>VG: assertUnchanged(captured, response)
+    AD->>VG: changedUnexpectedly(captured, response)
     UC->>AD: patchControlledFields(v1.2, status=Obsolete)
     AD->>OM: PATCH /api/v1/drives/files/{v1.2} json-patch
     UC->>AD: patchControlledFields(document, current_version_id=v2.0)
     AD->>OM: PATCH /api/v1/drives/directories/{document} json-patch
+    UC->>IN: advance(requestId, Completed)
     UC->>AU: record(StatusChanged actor, time, from, to)
     UC-->>CT: ApprovalResult
 ```
@@ -656,7 +691,8 @@ sequenceDiagram
 Ba lệnh `PATCH` trên **không** nằm trong một giao dịch của OpenMetadata. Vì vậy:
 
 - Toàn bộ khối nằm trong `withLock(documentId)` để không có hai luồng duyệt chen nhau (POC-22).
-- Nếu lệnh thứ hai hoặc ba lỗi, `ApproveVersionUseCase` ghi intent `StatusChangePending` và `IntentRecoveryJob` hoàn tất lại theo cùng thứ tự; bất biến "tối đa một bản Approved" được kiểm tra lại ở mỗi lần phục hồi.
+- Nếu lệnh thứ hai hoặc ba lỗi, `ApproveVersionUseCase` ghi intent `StatusChangePending` và `IntentRecoveryJob` hoàn tất lại theo cùng thứ tự; bất biến "tối đa một bản Approved" được kiểm tra lại ở mỗi lần phục hồi. **Không có intent này thì một lỗi ở lệnh thứ hai để lại hai bản `Approved` trong catalog** và chỉ còn `DanglingEntityScanner` phát hiện ở lượt quét sau — tức I4 bị vỡ trong khoảng thời gian giữa hai lượt.
+- Bản ghi audit của lượt chuyển trạng thái phải có **cả `from` và `to`**. Ghi riêng trạng thái đích là không đủ để trả lời POC-14 về lịch sử phát hành của một tài liệu.
 - `DanglingEntityScanner` có kiểm tra định kỳ: mọi `Document` có `current_version_id` trỏ tới phiên bản không ở trạng thái `Approved` đều bị báo lệch.
 
 ## 8. Tìm kiếm: nơi rủi ro tập trung
@@ -668,12 +704,12 @@ flowchart TB
     classDef port fill:#F3F0FB,stroke:#7A5FB8,color:#33265C
     classDef builtin fill:#E8F4FD,stroke:#2E7FB8,color:#0B3C5D
 
-    Q["SearchController<br/>GET /api/v1/search"]
+    Q["routes.search<br/>GET /api/v1/search"]
     UC["SearchDocumentsUseCase<br/>dựng SearchQuery nghiệp vụ"]
-    QB["OmSearchQueryBuilder<br/>term trên extension.document_type<br/>extension.status · extension.classification<br/>extension.collection_id + paging"]
+    QB["OmSearchQueryBuilder<br/>term trên extension.document_type · extension.status<br/>extension.classification · extension.collection_id<br/>extension.version_label · extension.owner<br/>match trên tên/title + paging"]
     OM["OpenMetadata Search API<br/>GET /api/v1/search/query"]
     RM["OmSearchResultMapper"]
-    PF["OmPermissionResultFilter<br/>lọc theo access_policy từng tài liệu"]
+    PF["SearchPage.filtered — domain<br/>lọc theo access_policy từng tài liệu"]
     GW["C9 Search Gateway<br/>chỉ bật nếu POC-17/19 không đạt"]
     OUT["Kết quả trả cho người gọi"]
 
@@ -687,7 +723,8 @@ flowchart TB
     GW -.-> OUT
 
     class Q,UC app
-    class QB,RM,PF adp
+    class QB,RM adp
+    class PF app
     class OM builtin
     class GW port
 ```
@@ -698,7 +735,8 @@ Ba giới hạn đã biết của OpenMetadata phải được xử lý ngay tro
 |---|---|---|
 | Custom property **không mặc định** là UI facet (issue #25217) | `OmSearchQueryBuilder` chỉ cam kết đường API; UI facet là yêu cầu riêng, đánh giá theo đối tượng sử dụng | POC-19 |
 | Trường chưa đăng ký hoặc chưa được index thì lọc **âm thầm sai** | `OmCustomPropertyRegistrar.assertFilterable(...)` chạy lúc khởi động; service fail fast | POC-19 |
-| Phân quyền kết quả tra cứu chưa chắc đủ cho người dùng cuối | `OmPermissionResultFilter` lọc lại theo `access_policy`; nếu chi phí/độ chính xác không đạt thì bật C9 | POC-02, 17, 20 |
+| Tập trường lọc được phải **phủ đủ** POC-02 | POC-02 yêu cầu tìm theo *tên, loại, owner, collection, trạng thái*. Vì vậy tập bắt buộc lọc được là `document_type`, `status`, `classification`, `collection_id`, `version_label`, **`owner`**, cộng khả năng tìm theo **tên/title**. Khai thiếu `owner` và tên thì `assertFilterable` vẫn pass trong khi POC-02 trượt | POC-02, 19 |
+| Phân quyền kết quả tra cứu chưa chắc đủ cho người dùng cuối | `SearchPage.filtered` ở `domain` lọc lại theo `access_policy`; nếu chi phí/độ chính xác không đạt thì bật C9 | POC-02, 17, 20 |
 
 ## 9. Quan hệ theo phiên bản: hai hiện thực, một port
 
@@ -711,7 +749,7 @@ flowchart LR
     RP["RelationshipPolicy<br/>validate · assertTargetNotRebound"]
     PORT["RelationshipStorePort<br/>upsert · query(direction, type)"]
     A["OmLineageRelationshipStore<br/>PUT /api/v1/lineage<br/>GET lineage theo FQN"]
-    B["JdbcRelationshipRegistry<br/>bảng relationship<br/>index hai chiều theo type"]
+    B["SqliteRelationshipRegistry<br/>bảng relationship<br/>index hai chiều theo type"]
     DEC{"POC-06 và POC-09:<br/>Lineage API truy vấn ngược<br/>đúng relation_type cho File entity?"}
 
     RP --> PORT
@@ -725,7 +763,7 @@ flowchart LR
     class A,B adp
 ```
 
-Nếu chọn `OmLineageRelationshipStore`, `lineageDetails` phải mang `relation_type`, và `OmFqnBuilder.versionFqn(...)` bảo đảm hai đầu edge là **File entity của phiên bản**, không phải Directory của tài liệu (bất biến I6). Nếu chọn `JdbcRelationshipRegistry`, bảng registry trở thành nguồn sự thật cho quan hệ và phải được đưa vào backup, đối soát và dự toán hạ tầng.
+Nếu chọn `OmLineageRelationshipStore`, `lineageDetails` phải mang `relation_type`, và `OmFqnBuilder.versionFqn(...)` bảo đảm hai đầu edge là **File entity của phiên bản**, không phải Directory của tài liệu (bất biến I6). Nếu chọn `SqliteRelationshipRegistry`, bảng registry trở thành nguồn sự thật cho quan hệ và phải được đưa vào backup, đối soát và dự toán hạ tầng.
 
 ## 10. Health check
 
@@ -870,7 +908,7 @@ classDiagram
 | `DocumentLock._probe_dependency` | lấy và nhả một khóa canary | REQUIRED_FOR_WRITE | Không duyệt phiên bản, không tạo phiên bản — vì mất bất biến I4, I5 |
 | `ReconcileBacklogIndicator` (đọc qua `IntentStorePort`) | số intent chưa hoàn tất và tuổi intent cũ nhất so với ngưỡng | OPTIONAL, báo DEGRADED | Không mất chức năng, nhưng cảnh báo lệch trạng thái đang tích tụ |
 
-Nguyên tắc với `IntentStoreHealthIndicator` và `LockHealthIndicator`: khi hai thành phần này DOWN thì **từ chối ghi**, không có chế độ suy giảm. Ghi khi thiếu intent hoặc thiếu khóa sẽ phá I4, I5, I13 — tức đổi một sự cố tạm thời thành sai dữ liệu lâu dài.
+Nguyên tắc với indicator của **intent store** và **khóa**: khi hai phụ thuộc này DOWN thì **từ chối ghi**, không có chế độ suy giảm. Ghi khi thiếu intent hoặc thiếu khóa sẽ phá I4, I5, I13 — tức đổi một sự cố tạm thời thành sai dữ liệu lâu dài.
 
 ### 10.4. Endpoint và chế độ suy giảm
 
@@ -918,13 +956,16 @@ classDiagram
         +int maxAttempts
         +Duration baseDelay
         +Duration maxDelay
-        +BackoffCalculator backoff
-        +isRetryable(DomainException) bool
+        +BackoffStrategy backoff
+        +isRetryable(ClassifiedError) bool
     }
-    class BackoffCalculator {
+    class BackoffStrategy {
+        <<abstract>>
         +nextDelay(attempt) Duration
-        +withFullJitter(Duration) Duration
+        +jitteredDelay(attempt) Duration
     }
+    class FullJitterBackoff
+    class FixedBackoff
     class RetryBudget {
         +double maxRetryRatio
         +tryAcquire() bool
@@ -973,11 +1014,12 @@ classDiagram
     class S3ObjectStoreAdapter {
         -ResilientCallExecutor executor
     }
-    class JdbcRegistryIntentStore {
+    class SqliteRegistryIntentStore {
         -ResilientCallExecutor executor
         -ConnectionPool pool
     }
     class ConnectionPool {
+        <<KHÔNG phải lớp tự viết — là cấu hình của httpx, botocore và kết nối sqlite>>
         +int maxConnections
         +Duration idleTimeout
         +Duration ttl
@@ -990,17 +1032,21 @@ classDiagram
     ResilientCallExecutor --> TimeoutPolicy
     ResilientCallExecutor --> RetryBudget
     ResilientCallExecutor --> Deadline
-    RetryPolicy --> BackoffCalculator
+    RetryPolicy --> BackoffStrategy
+    BackoffStrategy <|-- FullJitterBackoff
+    BackoffStrategy <|-- FixedBackoff
     RetryPolicy ..> ErrorClass
     OmErrorTranslator --> ErrorClass
     OmHttpClient --> ResilientCallExecutor
     OmHttpClient --> ConnectionPool
     S3ObjectStoreAdapter --> ResilientCallExecutor
-    JdbcRegistryIntentStore --> ResilientCallExecutor
-    JdbcRegistryIntentStore --> ConnectionPool
+    SqliteRegistryIntentStore --> ResilientCallExecutor
+    SqliteRegistryIntentStore --> ConnectionPool
 ```
 
-Mỗi phụ thuộc có **một `ResilientCallExecutor` riêng**, không dùng chung: circuit breaker của OpenMetadata mở không được làm chặn lời gọi S3, và ngược lại. `Bulkhead` tách pool để một phụ thuộc chậm không chiếm hết thread của toàn service.
+`ConnectionPool` ở sơ đồ trên là **cấu hình**, không phải một lớp trong `src/`: pool nằm trong `httpx.AsyncClient` (OpenMetadata), `botocore.config.Config` (S3) và kết nối sqlite. Mục 11.6 nói đúng điều này; sơ đồ vẽ nó thành một node để thấy tham số pool thuộc về đâu.
+
+`ExecutorRegistry` giữ **một `ResilientCallExecutor` cho mỗi phụ thuộc**, không dùng chung: circuit breaker của OpenMetadata mở không được làm chặn lời gọi S3, và ngược lại. Phụ thuộc `events` được tách thành **hai** executor — một cho outbox store, một cho downstream — vì dùng chung thì breaker của webhook sẽ làm health của outbox store báo `DOWN` oan. `Bulkhead` tách pool để một phụ thuộc chậm không chiếm hết thread của toàn service.
 
 ### 11.2. Phân loại lỗi trước khi quyết định retry
 
@@ -1063,8 +1109,9 @@ Giá trị dưới đây là **giá trị khởi điểm đề xuất**, nằm t
 | Object Storage — ghi object | 2s | theo kích thước file | theo kích thước file | 3 ở mức **từng part** | 200ms base, cap 5s | không mở breaker cho upload đang chạy | dùng multipart để retry theo part, không gửi lại toàn file |
 | Intent Store — registry DB | 500ms | 1s | 2s | 3 | 50ms base, cap 500ms | 50% trong 20 | thất bại thì từ chối ghi, không bỏ qua intent |
 | Intent Store — manifest S3 | 1s | 2s | 4s | 3 | 100ms base, cap 1s | như trên | Q2 còn mở |
-| IdP — JWKS | 1s | 2s | 3s | 2 | 200ms base | không mở | JWKS cache có TTL và dùng được bản cũ trong hạn |
 | Khóa phân tán | 300ms | 1s | **không retry quá hạn khóa** | 1 | — | — | hết hạn thì trả `409`, không giữ khóa để retry |
+| Outbox store (C7) | 500ms | 1s | 2s | 3 | 50ms base, cap 500ms | 50% trong 20 | executor **riêng**, không dùng chung với webhook downstream |
+| Webhook downstream | 1s | 3s | 5s | 3 | 200ms base, cap 2s | 50% trong 20 | breaker mở chỉ dừng việc phát sự kiện, không ảnh hưởng readiness của API |
 
 Ba ràng buộc không được vi phạm:
 
@@ -1096,7 +1143,7 @@ stateDiagram-v2
     end note
 ```
 
-Trạng thái breaker là **đầu vào của health check**, không phải thông tin nội bộ: `OpenMetadataHealthIndicator` đọc trạng thái breaker thay vì tự gọi thêm một lời gọi mới, để health check không làm nặng thêm phụ thuộc đang quá tải.
+Trạng thái breaker là **đầu vào của health check**, không phải thông tin nội bộ: `AdapterHealthIndicator` của OpenMetadata đọc trạng thái breaker thay vì tự gọi thêm một lời gọi mới, để health check không làm nặng thêm phụ thuộc đang quá tải.
 
 ### 11.5. Ranh giới giữa retry trong request và phục hồi bất đồng bộ
 
@@ -1135,12 +1182,12 @@ Ranh giới cố định: **retry trong request tính bằng giây**, chỉ đ�
 
 | Hạng mục | Yêu cầu |
 |---|---|
-| Connection pool | Mỗi phụ thuộc một pool riêng, có `maxConnections`, `idleTimeout`, TTL kết nối để DNS được phân giải lại sau khi OpenMetadata hoặc storage đổi IP |
+| Connection pool | Mỗi phụ thuộc một pool riêng, có `maxConnections`, `idleTimeout`, TTL kết nối để DNS được phân giải lại sau khi OpenMetadata hoặc storage đổi IP. Đây là **cấu hình của client library** (httpx cho OpenMetadata, boto3 cho S3, kết nối sqlite/DB cho C7), không phải một lớp pool tự viết |
 | Kiểm tra khi lấy kết nối | `validateOnBorrow` cho registry DB, tránh dùng kết nối đã bị firewall đóng im lặng |
 | Keep-alive | Bật cho OpenMetadata và S3; thời gian keep-alive phải nhỏ hơn idle timeout của proxy/load balancer phía trước |
 | Token | `OmAuthProvider` làm mới JWT trước khi hết hạn, có khóa chống làm mới đồng thời; `401` chỉ kích hoạt làm mới **một lần** |
 | Giới hạn đồng thời | `Bulkhead` cho mỗi phụ thuộc, có hàng đợi giới hạn và từ chối nhanh khi đầy, thay vì để thread chờ vô hạn |
-| Upload lớn | Multipart với retry theo part; không giữ toàn bộ file trong bộ nhớ, không gửi lại từ đầu khi một part lỗi |
+| Upload lớn | Multipart với retry theo part; **không giữ toàn bộ file trong bộ nhớ**, không gửi lại từ đầu khi một part lỗi. Ràng buộc này áp cho **cả** lớp nhận HTTP (D4) và lớp ghi storage (D13): đọc hết body vào `bytes` rồi mới ghi là vi phạm, vì bộ nhớ service sẽ tỷ lệ với kích thước file nhân số request đồng thời |
 | Khởi động | Thất bại kết nối lúc khởi động thì thử lại có backoff đến hạn chót của `startup` probe; quá hạn thì tiến trình thoát để orchestrator xử lý |
 
 ### 11.7. Chỉ số và cảnh báo bắt buộc
@@ -1158,16 +1205,23 @@ Ranh giới cố định: **retry trong request tính bằng giây**, chỉ đ�
 
 | Thành phần | Endpoint | Lớp xử lý | Bất biến bảo vệ |
 |---|---|---|---|
-| D1 | `POST /api/v1/documents` | `DocumentController.create` | I11 |
-| D1 | `POST /api/v1/documents/{documentId}/versions` | `VersionController.createVersion` | I1, I2, I3, I8, I9, I13 |
-| D1 | `POST /api/v1/versions/{versionId}/status` | `StatusController.transition` | I4, I5, I12, I14 |
-| D1 | `POST /api/v1/relationships` | `RelationshipController.declare` | I6 |
-| D1 | `GET /api/v1/versions/{versionId}/relationships?direction=both&type=` | `RelationshipController.query` | I7 |
-| D1 | `GET /api/v1/versions/{versionId}/download` | `DownloadController.download` | I11, POC-23 |
-| D1 | `GET /api/v1/search` | `SearchController.search` | POC-02, 17, 19 |
-| D1 | `PATCH /api/v1/documents/{documentId}/access-policy` | `PolicyController.update` | I11, I12 |
-| D1 | `GET /api/v1/documents/{documentId}/audit` | `AuditController.list` | I12 |
-| C8 | `POST /internal/reconcile/run` | `ReconcileController.run` | I13 |
+| D1 | `POST /api/v1/documents` | `routes.register_document` | I11, I18 |
+| D1 | `GET /api/v1/documents/{documentId}` | `routes.read_document` | I11 |
+| D1 | `POST /api/v1/documents/{documentId}/versions` | `routes.create_version` | I1, I2, I3, I8, I9, I10, I13, I18 |
+| D1 | `GET /api/v1/documents/{documentId}/versions` **(B14)** — trả `Page[VersionResponse]` | `routes.list_versions` | — |
+| D1 | `POST /api/v1/versions/{versionId}/status?document_id=` — `Idempotency-Key` bắt buộc **(B8: `WriteCtx`)** | `routes.transition_status` | I4, I5, I12, I13, I14 |
+| D1 | `POST /api/v1/relationships` | `routes.declare_relationship` | I6 |
+| D1 | `GET /api/v1/versions/{versionId}/relationships?direction=both&relation_type=` **(B14: phân trang cursor)** — trả `list[RelatedEdge]` kèm `direction` | `routes.query_relationships` | I7, I16 |
+| D1 | `GET /api/v1/versions/{versionId}/download` | `routes.download` | I11, POC-23 |
+| D1 | `GET /api/v1/search?...&owner=&version_label=&page_size=&cursor=` **(B13: `owner`/`version_label`; B14: `page_size`/`cursor`)** | `routes.search` | POC-02, 17, 19 |
+| D1 | `PATCH /api/v1/documents/{documentId}/access-policy` | `routes.update_access_policy` | I11, I12 |
+| D1 | `GET /api/v1/documents/{documentId}/audit` **(B14: phân trang cursor)** — trả `Page[AuditEvent]` | `routes.list_audit` | I12 |
+| D24 | `POST /api/v1/collections`, `GET /api/v1/collections`, `PATCH /api/v1/collections/{collectionId}` | `routes.collections` | — |
+| D24 | `PATCH /api/v1/documents/{documentId}/collection` | `routes.move_document` | I1 (đổi collection không đổi ID và object key) |
+| D25 | `DELETE /api/v1/documents/{documentId}`, `DELETE /api/v1/versions/{versionId}` | `routes.delete` | I17, POC-11, 15 |
+| D25 | `PATCH /api/v1/documents/{documentId}/retention` | `routes.update_retention` | I17 |
+| D23 | `PUT /api/v1/admin/document-type-schemas/{documentType}`, `GET /api/v1/admin/document-type-schemas` | `routes.schemas` | I18 |
+| C8 | CLI `python -m document_service.worker.reconcile` — không có endpoint HTTP tương ứng; `ReconcileRunner` chỉ chạy qua tiến trình `worker.reconcile` | `worker.reconcile.ReconcileRunner` | I13 |
 
 Endpoint vận hành (`/livez`, `/startupz`, `/readyz`, `/internal/healthz/deps`) nằm ở [mục 10.4](#104-endpoint-và-chế-độ-suy-giảm), tách khỏi `/api/v1` và không nằm trong hợp đồng công khai cho ứng dụng khai thác.
 
@@ -1175,16 +1229,25 @@ API của Document Service **không** phơi bày khái niệm của OpenMetadata
 
 Quy ước chung cho endpoint ghi: `Idempotency-Key` bắt buộc, `409 Conflict` khi điều kiện tiền đề đã đổi, `412` khi phiên bản entity không khớp, mọi API danh sách phân trang theo con trỏ.
 
+**Hai quy ước dễ bị bỏ sót:**
+
+- `GET /versions/{id}/relationships` trả mỗi quan hệ kèm trường `direction` (`outgoing` | `incoming`) và **giữ nguyên** `source_version_id`/`target_version_id`. Đảo hai đầu để biểu diễn chiều vào là trả về một quan hệ sai (bất biến I16).
+- `POST /versions/{id}/status` nhận thêm `document_id` qua query. Trông như dư thừa nhưng là cần thiết: adapter phải có `document_id` để dựng FQN và đọc thẳng entity, nếu không thì chỉ còn đường tra qua Search API — mà index có độ trễ nên vừa tạo phiên bản xong đã duyệt sẽ không tìm thấy.
+- Một `Idempotency-Key` đã dùng cho lượt ghi kết thúc ở trạng thái `Failed` **không** được dùng lại cho một lượt ghi mới: service trả `409` và yêu cầu khóa mới. Nếu muốn cho dùng lại thì phải định nghĩa rõ cách giải phóng khóa cũ, không để một nhánh code tưởng là cho phép trong khi tầng dưới có ràng buộc `UNIQUE` chặn.
+
 ## 13. Bộ test cho adapter OpenMetadata
 
 | Bộ test | Chạy trên | Khẳng định chính | Test case PoC |
 |---|---|---|---|
 | `MetadataCatalogPortContractTest` | OpenMetadata thật (phiên bản đã cố định) + fake in-memory | Đăng ký Directory/File; đọc lại đúng `extension`; lọc tổ hợp `document_type` + `status` + `classification` + `collection_id` có phân trang; không trả tài liệu ngoài quyền | POC-02, 17, 19 |
-| `RelationshipStorePortContractTest` | `OmLineageRelationshipStore` **và** `JdbcRelationshipRegistry` | Truy vấn hai chiều đúng `relation_type`; tạo phiên bản mới không làm đổi đích quan hệ cũ | POC-06, 09 |
+| `RelationshipStorePortContractTest` | `OmLineageRelationshipStore` **và** `SqliteRelationshipRegistry` | Truy vấn hai chiều đúng `relation_type`; tạo phiên bản mới không làm đổi đích quan hệ cũ | POC-06, 09 |
 | `OmSchemaMigrationTest` | OpenMetadata thật | Custom property được tạo đúng kiểu; `assertFilterable` phát hiện trường chưa index; service fail fast | POC-19 |
-| `OmEntityVersionGuardTest` | OpenMetadata thật | Hai `PATCH` đồng thời lên cùng entity bị phát hiện, không mất thay đổi | POC-22 |
+| `OmEntityVersionGuardTest` | OpenMetadata thật | `capture`/`changedUnexpectedly` phát hiện được trường hợp `version` tụt. **Không** khẳng định phát hiện được hai `PATCH` đồng thời — việc đó do khóa đảm nhiệm | POC-22 |
+| `DocumentLockContractTest` | khóa trong tiến trình **và** C13 khi có | Hai lượt duyệt đồng thời cho đúng một bản `Approved`; với 2 instance mà chỉ có khóa trong tiến trình thì test **phải trượt**, để khẳng định C13 là bắt buộc | POC-22, 26 |
+| `MetadataSchemaTest` | fake + OpenMetadata thật | Thiếu trường bắt buộc theo `document_type` thì tạo phiên bản bị từ chối; `metadata_source` được ghi đúng | POC-24 |
+| `RetentionDeletionTest` | fake + S3-compatible được chọn | Xóa làm ngừng cấp link mới ngay; audit và lịch sử trạng thái **vẫn còn** sau khi xóa | POC-11, 15, 25 |
 | `ObjectStorePortContractTest` | S3-compatible được chọn | Object bất biến; presign đúng TTL; head trả checksum; liệt kê theo prefix | POC-01, 15 |
-| `IntentStorePortContractTest` | `S3ManifestIntentStore` **và** `JdbcRegistryIntentStore` | `findByIdempotencyKey` đúng khi gọi song song; `findUnfinished` đủ sau restart; hai writer không ghi đè nhau | POC-18, 21, 22 |
+| `IntentStorePortContractTest` | `S3ManifestIntentStore` **và** `SqliteRegistryIntentStore` | `findByIdempotencyKey` đúng khi gọi song song; `findUnfinished` đủ sau restart; hai writer không ghi đè nhau | POC-18, 21, 22 |
 | `PolicyDecisionPortContractTest` | Cấu hình RBAC/ABAC được chọn | Quyền xem metadata khác quyền tải; tài liệu chưa ánh xạ quyền ở chế độ hạn chế | POC-04, 11, 17 |
 | `EventPublisherPortContractTest` | Outbox + change events của OpenMetadata | Không mất sự kiện khi downstream lỗi; phát hiện được sự kiện thất lạc | POC-11 |
 | `CatalogBypassGuardTest` | OpenMetadata thật | Tài khoản người dùng **không** sửa được `extension.status`, `access_policy`, `current_version_id` qua API/UI của catalog | POC-20 |
@@ -1205,10 +1268,15 @@ Hai bộ test quyết định hai quyết định còn mở: `RelationshipStoreP
 | I10 | `OmFileEntityMapper` + `ObjectStorePort.head` khi đối soát | contract |
 | I11 | `AccessPolicy.permits`, mặc định hạn chế khi thiếu mapping | unit (POC-04) |
 | I12 | `AuditPort.record` trong mọi use case ghi | unit + kiểm tra phụ thuộc |
-| I13 | `IdempotencyGuard.runOnce` | contract + chaos test kill/restart (POC-21) |
+| I13 | `IdempotencyGuard.inspect` + ràng buộc `UNIQUE` trên `idempotency_key` | contract + chaos test kill/restart (POC-21) |
+| I15 | `MetadataSchemaPolicy`, `CatalogMetadataBuilder` ghi `metadata_source` | unit (POC-24) |
+| I16 | `RelationshipStorePort.query` trả kèm `direction`, không đảo hai đầu | unit + contract (POC-06) |
+| I17 | `RetentionPolicy.assertAuditPreserved`, `ApplyRetentionUseCase` | unit + contract (POC-11, 15, 25) |
+| I18 | `MetadataSchemaPolicy.assertRequiredPresent` trong `CreateVersionUseCase` | unit (POC-24) |
 
 Ba kiểm tra bắt buộc trong CI, không phải tùy chọn:
 
 1. **Kiểm tra phụ thuộc:** không package nào trong `domain` hoặc `domain.port` import model/SDK của OpenMetadata hoặc AWS.
 2. **Kiểm tra đường ghi:** không use case nào ghi `status`, `access_policy`, `current_version_id` hay quan hệ mà không đi qua `LifecyclePolicy`/`RelationshipPolicy` và `AuditPort` — phiên bản mã nguồn của ranh giới ở [c4-02 mục 2.4](c4-02-container.md#24-ranh-giới-ghi-dữ-liệu).
 3. **Kiểm tra phiên bản catalog:** `OmApiVersionPin.assertCompatible(...)` chạy trong health check (mục 10); server OpenMetadata lệch phiên bản đã cố định thì `readyz` báo không khỏe, và phải chạy lại hồi quy bằng Phụ lục B trước khi nâng cấp.
+4. **Kiểm tra tên lớp trong tài liệu khớp mã nguồn:** mọi tên lớp xuất hiện trong `docs/c4-04b-code-structure.md` phải tồn tại trong `src/`. Mức Code là mức lạc hậu nhanh nhất trong C4, nên việc này phải là một cổng tự động, không phải thói quen rà tay. Lần rà soát 19/11/2026 tìm ra 12 tên lớp trong tài liệu không có trong mã nguồn.

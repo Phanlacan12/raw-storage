@@ -25,6 +25,7 @@ class IssueDownloadCommand:
     document_id: DocumentId
     version_id: DocumentVersionId
     principal: Principal
+    cached_only: bool = False
 
 
 class IssueDownloadUseCase(ReadUseCase[IssueDownloadCommand, DownloadGrant]):
@@ -38,14 +39,16 @@ class IssueDownloadUseCase(ReadUseCase[IssueDownloadCommand, DownloadGrant]):
     async def execute(self, command: IssueDownloadCommand) -> DownloadGrant:
         """Cấp quyền tải, ghi audit cho cả trường hợp bị từ chối."""
         try:
-            await self._authorize(command.principal, Action.DOWNLOAD, str(command.version_id))
+            if command.cached_only:
+                return await self._issue_cached(command)
+            await self._authorize(command.principal, Action.DOWNLOAD, str(command.document_id))
         except PolicyDeniedError as error:
             await self._audit(command, AuditOutcome.denied(str(error)))
             raise
         document = await self.ports.catalog.read_document(command.document_id)
         version = document.find_version(command.version_id)
         policy = await self.ports.policies.effective_policy(command.document_id)
-        if policy.require_proxy_download:
+        if document.access_policy.require_proxy_download or policy.require_proxy_download:
             await self._audit(command, AuditOutcome(result="proxy"))
             return DownloadGrant(version_id=version.version_id, proxied=True)
         url = await self.ports.objects.presign(
@@ -59,6 +62,21 @@ class IssueDownloadUseCase(ReadUseCase[IssueDownloadCommand, DownloadGrant]):
             url=url,
             expires_in_seconds=self._ttl_seconds,
         )
+
+    async def _issue_cached(self, command: IssueDownloadCommand) -> DownloadGrant:
+        """Cấp link từ cache xác thực, không gọi catalog khi đang suy giảm."""
+        cached = self.ports.policies.cached_download(
+            command.principal, command.document_id, command.version_id
+        )
+        if cached is None:
+            raise PolicyDeniedError("no current cached download authorization for this version")
+        uri, remaining = cached
+        ttl = min(self._ttl_seconds, remaining)
+        url = await self.ports.objects.presign(uri, timedelta(seconds=ttl))
+        await self._audit(
+            command, AuditOutcome(result="presigned", detail=f"cached policy ttl={ttl}s")
+        )
+        return DownloadGrant(version_id=command.version_id, url=url, expires_in_seconds=ttl)
 
     async def _audit(self, command: IssueDownloadCommand, outcome: AuditOutcome) -> None:
         """Ghi audit mỗi lần cấp hoặc từ chối cấp file."""

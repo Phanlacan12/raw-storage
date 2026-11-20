@@ -11,6 +11,7 @@ from datetime import datetime
 
 from document_service.domain.errors import (
     DocumentNotFoundError,
+    InvalidValueError,
     RelationshipRebindError,
     StatusTransitionError,
     VersionLabelConflictError,
@@ -23,6 +24,7 @@ from document_service.domain.value import (
     DocumentStatus,
     DocumentVersionId,
     IdempotencyKey,
+    IntentKind,
     IntentState,
     RelationType,
     RequestId,
@@ -117,6 +119,8 @@ class DocumentVersion:
     created_by: str = ""
     approved_at: datetime | None = None
     approved_by: str | None = None
+    obsoleted_at: datetime | None = None
+    obsoleted_by: str | None = None
 
     @property
     def is_approved(self) -> bool:
@@ -138,16 +142,18 @@ class DocumentVersion:
         if self.status is DocumentStatus.OBSOLETE:
             raise StatusTransitionError(f"version {self.version_id} is already Obsolete")
         self.status = DocumentStatus.OBSOLETE
-        self.approved_by = self.approved_by or actor.principal_id
-        self.approved_at = self.approved_at or when
+        self.obsoleted_by = actor.principal_id
+        self.obsoleted_at = when or _now()
 
 
 @dataclass(slots=True)
-class ApprovalResult:
+class TransitionResult:
     """Kết quả một lượt duyệt phiên bản."""
 
-    approved: DocumentVersion
+    changed: DocumentVersion
+    changed_from: DocumentStatus
     obsoleted: DocumentVersion | None = None
+    obsoleted_from: DocumentStatus | None = None
 
 
 @dataclass(slots=True)
@@ -208,7 +214,7 @@ class Document:
                 return version
         return None
 
-    def approve(self, version_id: DocumentVersionId, actor: Actor) -> ApprovalResult:
+    def approve(self, version_id: DocumentVersionId, actor: Actor) -> TransitionResult:
         """Duyệt một phiên bản và hạ bản Approved trước đó xuống Obsolete.
 
         Thực thi bất biến I4, I5 và I14 trong một thao tác logic duy nhất.
@@ -217,19 +223,22 @@ class Document:
         previous = self.current_approved()
         if previous is not None and previous.version_id == version_id:
             raise StatusTransitionError(f"version {version_id} is already the current one")
+        changed_from = target.status
+        previous_from = previous.status if previous is not None else None
         target.mark_approved(actor)
         if previous is not None:
             previous.mark_obsolete(actor)
         self.current_version_id = target.version_id
-        return ApprovalResult(approved=target, obsoleted=previous)
+        return TransitionResult(target, changed_from, previous, previous_from)
 
-    def obsolete(self, version_id: DocumentVersionId, actor: Actor) -> DocumentVersion:
+    def obsolete(self, version_id: DocumentVersionId, actor: Actor) -> TransitionResult:
         """Chuyển một phiên bản sang Obsolete và cập nhật bản hiện hành nếu cần."""
         target = self.find_version(version_id)
+        changed_from = target.status
         target.mark_obsolete(actor)
         if self.current_version_id == version_id:
             self.current_version_id = None
-        return target
+        return TransitionResult(target, changed_from)
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,32 +256,39 @@ class Relationship:
         if self.source_version_id == self.target_version_id:
             raise RelationshipRebindError("a relationship cannot point back to the same version")
 
-    def reversed_direction(self) -> Relationship:
-        """Bản ghi quan hệ theo chiều ngược, dùng khi trả kết quả hai chiều."""
-        return Relationship(
-            relation_type=self.relation_type,
-            source_version_id=self.target_version_id,
-            target_version_id=self.source_version_id,
-            created_at=self.created_at,
-            created_by=self.created_by,
-        )
-
 
 @dataclass(slots=True)
-class UploadIntent:
+class ProcessingIntent:
     """Ý định xử lý bền vững của một lượt ghi (mục 3.5 báo cáo)."""
 
     request_id: RequestId
     idempotency_key: IdempotencyKey
     document_id: DocumentId
-    version_id: DocumentVersionId
-    expected_checksum: Checksum
+    version_id: DocumentVersionId | None
+    expected_checksum: Checksum | None
     state: IntentState = IntentState.RECEIVED
     retry_count: int = 0
     created_at: datetime = field(default_factory=_now)
     updated_at: datetime = field(default_factory=_now)
     last_error: str = ""
     payload: dict[str, str] = field(default_factory=dict)
+
+    kind: IntentKind = IntentKind.UPLOAD
+
+    def __post_init__(self) -> None:
+        """Ràng buộc dữ liệu cần cho hai nhánh phục hồi phiên bản."""
+        if self.kind is not IntentKind.COMMAND and self.version_id is None:
+            raise InvalidValueError(f"{self.kind} intent requires a version_id")
+        if self.kind is IntentKind.UPLOAD and self.expected_checksum is None:
+            raise InvalidValueError("upload intent requires an expected checksum")
+
+    def needs_recovery(self, threshold: datetime, kind: IntentKind | None) -> bool:
+        """Chọn intent dở dang đúng loại và đủ cũ."""
+        return (
+            not self.state.is_terminal
+            and self.updated_at <= threshold
+            and (kind is None or self.kind is kind)
+        )
 
     def advance(self, state: IntentState, when: datetime | None = None) -> None:
         """Cập nhật trạng thái xử lý, không cho quay lại từ trạng thái kết thúc."""
@@ -306,6 +322,7 @@ class AuditEvent:
     document_id: str = ""
     occurred_at: datetime = field(default_factory=_now)
     detail: str = ""
+    delivery_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -317,3 +334,4 @@ class DomainEvent:
     version_id: DocumentVersionId | None = None
     occurred_at: datetime = field(default_factory=_now)
     payload: dict[str, str] = field(default_factory=dict)
+    delivery_id: str | None = None

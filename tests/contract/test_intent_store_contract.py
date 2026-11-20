@@ -8,18 +8,18 @@ thái không mất sau khi ghi lại, và `find_unfinished` trả đủ intent d
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import timedelta
 
-import pytest
-
 from document_service.domain.errors import ConcurrencyConflictError
-from document_service.domain.model import UploadIntent
+from document_service.domain.model import ProcessingIntent
 from document_service.domain.port import IntentStorePort
 from document_service.domain.value import (
     Checksum,
     DocumentId,
     DocumentVersionId,
     IdempotencyKey,
+    IntentKind,
     IntentState,
     RequestId,
 )
@@ -28,9 +28,9 @@ from document_service.utils.clock import utc_now
 CHECKSUM = Checksum.parse("sha256:" + "a" * 64)
 
 
-def _intent(suffix: str, key: str = "") -> UploadIntent:
+def _intent(suffix: str, key: str = "") -> ProcessingIntent:
     """Dựng intent mẫu."""
-    return UploadIntent(
+    return ProcessingIntent(
         request_id=RequestId(f"REQ-{suffix}"),
         idempotency_key=IdempotencyKey(key or f"idem-key-{suffix}"),
         document_id=DocumentId("DOC-1"),
@@ -51,6 +51,26 @@ class TestIntentStoreContract:
         assert found is not None
         assert found.version_id == intent.version_id
         assert found.payload["version_id"] == "VER-0001"
+
+    async def test_find_unfinished_by_kind(self, intent_store: IntentStorePort) -> None:
+        """Giữ loại và checksum qua lượt đọc lại, lọc đúng các thao tác phục hồi."""
+        upload = _intent("upload")
+        status = _intent("status")
+        status.kind = IntentKind.STATUS_CHANGE
+        status.expected_checksum = None
+        command = replace(
+            _intent("command"), kind=IntentKind.COMMAND, version_id=None, expected_checksum=None
+        )
+        for item in (upload, status, command):
+            await intent_store.create(item)
+        window = timedelta(seconds=-1)
+        for item in (upload, status, command):
+            found = await intent_store.find_unfinished(window, item.kind)
+            assert [result.request_id for result in found] == [item.request_id]
+            assert found[0].version_id == item.version_id
+            assert found[0].kind is item.kind
+            assert found[0].expected_checksum == item.expected_checksum
+        assert len(await intent_store.find_unfinished(window)) == 3
 
     async def test_advance_persists_state(self, intent_store: IntentStorePort) -> None:
         """Chuyển trạng thái được ghi lại bền vững."""
@@ -109,10 +129,11 @@ class TestIntentStoreContract:
         failures = [item for item in results if isinstance(item, Exception)]
         found = await intent_store.find_by_idempotency_key(IdempotencyKey(shared_key))
         assert found is not None
-        if failures:
-            assert all(isinstance(item, ConcurrencyConflictError) for item in failures)
-        else:
-            pytest.skip("hiện thực này không ràng buộc UNIQUE trên idempotency_key")
+        assert len(failures) == 1 and isinstance(failures[0], ConcurrencyConflictError)
+        winner = second if isinstance(results[0], Exception) else first
+        assert found.request_id == winner.request_id
+        unfinished = await intent_store.find_unfinished(timedelta(seconds=-1))
+        assert [item.request_id for item in unfinished] == [winner.request_id]
 
     async def test_updated_at_moves_forward(self, intent_store: IntentStorePort) -> None:
         """Mỗi lần ghi lại cập nhật thời điểm, phục vụ ngưỡng stale."""

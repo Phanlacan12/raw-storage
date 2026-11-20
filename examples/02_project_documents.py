@@ -43,6 +43,7 @@ async def _version(client: Any, document_id: str, label: str, payload: bytes) ->
     await client.post(
         f"/api/v1/versions/{version_id}/status",
         params={"document_id": document_id},
+        headers={"Idempotency-Key": f"approve-{version_id}"},
         json={"status": "Approved"},
     )
     return version_id
@@ -91,13 +92,13 @@ async def main() -> None:
         outgoing = await client.get(
             f"/api/v1/versions/{srs_v20}/relationships", params={"direction": "outgoing"}
         )
-        for item in outgoing.json():
+        for item in outgoing.json()["items"]:
             line(item["relation_type"], f'-> {item["target_version_id"]}')
         check(
             "SRS v2.0 derived_from URD v1.2",
             any(
                 item["relation_type"] == "derived_from" and item["target_version_id"] == urd_v12
-                for item in outgoing.json()
+                for item in outgoing.json()["items"]
             ),
         )
 
@@ -105,11 +106,11 @@ async def main() -> None:
         incoming = await client.get(
             f"/api/v1/versions/{urd_v12}/relationships", params={"direction": "incoming"}
         )
-        for item in incoming.json():
-            line(item["relation_type"], f'<- {item["target_version_id"]}')
+        for item in incoming.json()["items"]:
+            line(item["relation_type"], f'<- {item["source_version_id"]}')
         check(
             "URD v1.2 is derived by SRS v2.0",
-            any(item["target_version_id"] == srs_v20 for item in incoming.json()),
+            any(item["source_version_id"] == srs_v20 for item in incoming.json()["items"]),
         )
 
         heading("6. Create SRS v2.1 - existing relationships must stay")
@@ -120,12 +121,12 @@ async def main() -> None:
         )
         check(
             "v2.0 relationship target unchanged",
-            [item["target_version_id"] for item in after.json()] == [urd_v12],
+            [item["target_version_id"] for item in after.json()["items"]] == [urd_v12],
         )
         new_version_edges = await client.get(
             f"/api/v1/versions/{srs_v21}/relationships", params={"direction": "outgoing"}
         )
-        check("v2.1 has no relationship yet", new_version_edges.json() == [])
+        check("v2.1 has no relationship yet", new_version_edges.json()["items"] == [])
 
         heading("7. KB fetches the project's Approved documents")
         approved = await client.get(

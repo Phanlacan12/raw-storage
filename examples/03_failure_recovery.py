@@ -31,8 +31,6 @@ async def main() -> None:
         InMemoryRelationshipStore,
     )
     from document_service.application.context import PolicySet, PortBundle
-    from document_service.application.metadata_builder import CatalogMetadataBuilder
-    from document_service.application.orchestration.upload_saga import UploadSaga
     from document_service.application.usecase.create_version import (
         CreateVersionCommand,
         CreateVersionUseCase,
@@ -44,6 +42,7 @@ async def main() -> None:
     from document_service.config import get_settings
     from document_service.domain.dto import UploadRequest
     from document_service.domain.errors import DependencyUnavailableError
+    from document_service.domain.metadata_builder import CatalogMetadataBuilder
     from document_service.domain.model import DocumentMetadata, Principal
     from document_service.domain.policy import (
         DedupPolicy,
@@ -151,8 +150,7 @@ async def main() -> None:
     )
 
     heading("4. The reconciliation job recovers it")
-    saga = UploadSaga(objects, catalog, intents)
-    report = await IntentRecoveryJob(intents, saga, catalog, settings).run_once()
+    report = await IntentRecoveryJob(ports, settings).run_once()
     line("recovered", report.recovered)
     line("failed", report.failed)
     recovered = await intents.find_by_request_id(intent.request_id)
@@ -165,7 +163,7 @@ async def main() -> None:
     check("document_version_id unchanged", versions[0].version_id == intent.version_id)
 
     heading("5. Re-run the job with nothing left to do")
-    again = await IntentRecoveryJob(intents, saga, catalog, settings).run_once()
+    again = await IntentRecoveryJob(ports, settings).run_once()
     line("recovered", again.recovered)
     check("no pending intent left", again.recovered == 0 and again.failed == 0)
 

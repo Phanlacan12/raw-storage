@@ -10,12 +10,20 @@ class DomainError(Exception):
     """Lỗi gốc của miền nghiệp vụ."""
 
 
+class SchemaNotReadyError(DomainError):
+    """Schema của catalog chưa đủ điều kiện để service nhận việc."""
+
+
 class InvalidValueError(DomainError):
     """Giá trị đầu vào không hợp lệ."""
 
 
 class DocumentNotFoundError(DomainError):
     """Không tìm thấy tài liệu hoặc phiên bản được yêu cầu."""
+
+
+class ChecksumMismatchError(DomainError):
+    """Dữ liệu trong kho object khác checksum của intent."""
 
 
 class DuplicateContentError(DomainError):

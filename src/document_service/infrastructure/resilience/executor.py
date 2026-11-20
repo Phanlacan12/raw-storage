@@ -13,7 +13,11 @@ from typing import Awaitable, Callable, TypeVar
 from document_service.config import DependencyResiliencePolicy
 from document_service.domain.errors import DependencyUnavailableError
 from document_service.infrastructure.resilience.breaker import Bulkhead, CircuitBreaker
-from document_service.infrastructure.resilience.deadline import Deadline, TimeoutPolicy
+from document_service.infrastructure.resilience.deadline import (
+    Deadline,
+    TimeoutPolicy,
+    get_current_deadline,
+)
 from document_service.infrastructure.resilience.retry import (
     BackoffStrategy,
     ClassifiedError,
@@ -87,7 +91,7 @@ class ResilientCallExecutor:
         deadline: Deadline | None = None,
     ) -> T:
         """Thực hiện lời gọi, có retry trong hạn deadline."""
-        effective_deadline = deadline or self.new_deadline()
+        effective_deadline = deadline or get_current_deadline() or self.new_deadline()
         if not self._breaker.allow_request():
             raise DependencyUnavailableError(
                 self._name, f"circuit breaker for {self._name} is open"

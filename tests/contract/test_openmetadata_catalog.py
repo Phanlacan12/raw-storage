@@ -125,7 +125,9 @@ class TestOpenMetadataAdapter:
         assert '"collection_id":"PROJECT-A"' in payload
 
     @respx.mock
-    async def test_patch_uses_replace_only(self, adapter: OpenMetadataCatalogAdapter) -> None:
+    async def test_patch_replaces_existing_scalar(
+        self, adapter: OpenMetadataCatalogAdapter
+    ) -> None:
         """JSON Patch chỉ dùng `replace`, vì `add` vào mảng không idempotent."""
         respx.get(f"{BASE_URL}/api/v1/search/query").mock(
             return_value=httpx.Response(
@@ -139,12 +141,16 @@ class TestOpenMetadataAdapter:
             )
         )
         respx.get(f"{BASE_URL}/api/v1/drives/files/name/raw.documents.DOC-1.VER-1").mock(
-            return_value=httpx.Response(200, json={"id": "file-1", "version": 1.0})
+            return_value=httpx.Response(
+                200, json={"id": "file-1", "version": 1.0, "extension": {"status": "Draft"}}
+            )
         )
         respx.patch(f"{BASE_URL}/api/v1/drives/files/file-1").mock(
             return_value=httpx.Response(200, json={"id": "file-1", "version": 1.1})
         )
-        await adapter.patch_controlled_fields(DocumentVersionId("VER-1"), {"status": "Approved"})
+        await adapter.patch_controlled_fields(
+            DocumentId("DOC-1"), DocumentVersionId("VER-1"), {"status": "Approved"}
+        )
         body = respx.calls.last.request.read().decode()
         assert '"op":"replace"' in body
         assert '"path":"/extension/status"' in body

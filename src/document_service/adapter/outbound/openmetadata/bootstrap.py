@@ -15,15 +15,13 @@ from document_service.adapter.outbound.openmetadata import endpoints
 from document_service.adapter.outbound.openmetadata.client import OmHttpClient
 from document_service.adapter.outbound.openmetadata.endpoints import OmFqnBuilder
 from document_service.config import CatalogSettings
-from document_service.domain.errors import DomainError
+from document_service.domain.errors import SchemaNotReadyError
+from document_service.domain.metadata_fields import DOCUMENT_FIELDS, INTEGER_FIELDS, VERSION_FIELDS
 from document_service.utils.logging_setup import get_logger
 
 _LOGGER = get_logger(__name__)
 _STRING_PROPERTY = "string"
-
-
-class SchemaNotReadyError(DomainError):
-    """Schema của catalog chưa đủ điều kiện để service nhận việc."""
+_INTEGER_PROPERTY = "integer"
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,10 +74,40 @@ class OmCustomPropertyRegistrar:
     def __init__(self, client: OmHttpClient) -> None:
         """Nhận client HTTP."""
         self._client = client
+        self._field_type_ids: dict[str, str] = {}
+
+    async def field_type_id(self, name: str) -> str:
+        """UUID của một field type (`string`, `integer`, ...) trên server.
+
+        OpenMetadata nhận `propertyType.id` là **UUID**, không phải tên. Gửi thẳng
+        chuỗi `"string"` thì server trả 500 `Failed to convert JsonValue to target
+        class`, và thông báo đó không hề nhắc tới UUID nên rất dễ đi tìm nhầm chỗ.
+        UUID khác nhau giữa các lần cài, nên phải tra chứ không hardcode được.
+        """
+        if name in self._field_type_ids:
+            return self._field_type_ids[name]
+        payload = await self._client.get(
+            endpoints.METADATA_TYPES, params={"category": "field", "limit": 100}
+        )
+        for item in payload.get("data", []) or []:
+            if isinstance(item, dict) and item.get("name") and item.get("id"):
+                self._field_type_ids[str(item["name"])] = str(item["id"])
+        if name not in self._field_type_ids:
+            raise SchemaNotReadyError(f"server has no field type named {name}")
+        return self._field_type_ids[name]
 
     async def existing_properties(self, entity_type: str) -> set[str]:
-        """Tên các custom property đã có trên một entity type."""
-        payload = await self._client.get(f"{endpoints.METADATA_TYPES}/name/{entity_type}")
+        """Tên các custom property đã có trên một entity type.
+
+        Bắt buộc có `fields=customProperties`: không truyền thì OpenMetadata trả entity
+        type **không kèm** custom property, hàm này luôn trả về tập rỗng, và hệ quả là
+        `ensure_properties` đăng ký lại mỗi lần khởi động còn `assert_filterable` báo
+        thiếu trường kể cả khi trường đã có.
+        """
+        payload = await self._client.get(
+            f"{endpoints.METADATA_TYPES}/name/{entity_type}",
+            params={"fields": "customProperties"},
+        )
         items = payload.get("customProperties", []) or []
         return {
             str(item.get("name")) for item in items if isinstance(item, dict) and item.get("name")
@@ -98,15 +126,13 @@ class OmCustomPropertyRegistrar:
         for definition in definitions:
             if definition.name in existing:
                 continue
-            await self._client.patch(
+            # PUT chứ không phải JSON Patch. OpenMetadata có hẳn một endpoint
+            # "add or update a property to an entity type" nhận thẳng object
+            # CustomProperty; đẩy JSON Patch `add /customProperties/-` vào đây thì
+            # server trả 500 `Cannot invoke "Object.hashCode()" because "key" is null`.
+            await self._client.put(
                 f"{endpoints.METADATA_TYPES}/{type_id}",
-                [
-                    {
-                        "op": "add",
-                        "path": "/customProperties/-",
-                        "value": self._as_payload(definition),
-                    }
-                ],
+                await self._as_payload(definition),
             )
             added.append(definition.name)
         return added
@@ -124,12 +150,15 @@ class OmCustomPropertyRegistrar:
                 f"custom property is not registered on {entity_type}: {', '.join(missing)}"
             )
 
-    def _as_payload(self, definition: PropertyDefinition) -> dict[str, Any]:
+    async def _as_payload(self, definition: PropertyDefinition) -> dict[str, Any]:
         """Payload đăng ký một custom property."""
         return {
             "name": definition.name,
             "description": definition.description or definition.name,
-            "propertyType": {"id": definition.property_type, "type": "type"},
+            "propertyType": {
+                "id": await self.field_type_id(definition.property_type),
+                "type": "type",
+            },
         }
 
 
@@ -153,8 +182,20 @@ class OmSchemaMigration:
             )
         await self._provisioner.ensure_drive_service()
         await self._provisioner.ensure_root_directory()
-        definitions = [PropertyDefinition(name=name) for name in self._settings.required_properties]
-        for entity_type in ("file", "directory"):
+        # Phải đăng ký MỌI key sẽ ghi vào `extension`, không chỉ các trường filterable:
+        # OpenMetadata trả `400 Unknown custom field <tên>` ngay lệnh ghi đầu tiên nếu
+        # gặp key lạ. File và Directory mang hai bộ trường khác nhau.
+        fields_by_type = {"file": VERSION_FIELDS, "directory": DOCUMENT_FIELDS}
+        for entity_type, field_names in fields_by_type.items():
+            definitions = [
+                PropertyDefinition(
+                    name=name,
+                    property_type=(
+                        _INTEGER_PROPERTY if name in INTEGER_FIELDS else _STRING_PROPERTY
+                    ),
+                )
+                for name in field_names
+            ]
             added = await self._registrar.ensure_properties(entity_type, definitions)
             if added:
                 _LOGGER.info(
@@ -162,5 +203,10 @@ class OmSchemaMigration:
                     extra={"entity_type": entity_type, "added": ",".join(added)},
                 )
             await self._registrar.assert_filterable(
-                entity_type, list(self._settings.required_properties)
+                entity_type,
+                [
+                    name
+                    for name in self._settings.required_properties
+                    if entity_type == "file" or name in DOCUMENT_FIELDS
+                ],
             )

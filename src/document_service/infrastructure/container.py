@@ -13,6 +13,7 @@ from document_service.adapter.inbound.health.indicators import (
     ReconcileBacklogIndicator,
 )
 from document_service.adapter.inbound.health.registry import DegradedModeGate, HealthCheckRegistry
+from document_service.adapter.inbound.security.auth import PrincipalResolver
 from document_service.adapter.inbound.sync.source_sync import SourceSyncJob, SourceSyncScheduler
 from document_service.adapter.outbound.fake.in_memory import (
     AllowAllPolicyDecision,
@@ -26,14 +27,15 @@ from document_service.adapter.outbound.fake.in_memory import (
 )
 from document_service.adapter.outbound.intent.s3_manifest_store import S3ManifestIntentStore
 from document_service.adapter.outbound.intent.sqlite_store import SqliteRegistryIntentStore
+from document_service.adapter.outbound.lock.redis_lock import RedisDocumentLock
 from document_service.adapter.outbound.observability.audit_log import StructuredAuditLogger
 from document_service.adapter.outbound.observability.metrics import MetricsRecorder
-from document_service.adapter.outbound.observability.outbox import (
+from document_service.adapter.outbound.observability.outbox_dispatcher import (
     OutboxDispatcher,
-    OutboxEventPublisher,
-    SqliteOutbox,
     WebhookEventSender,
 )
+from document_service.adapter.outbound.observability.outbox_publisher import OutboxEventPublisher
+from document_service.adapter.outbound.observability.outbox_store import SqliteOutbox
 from document_service.adapter.outbound.openmetadata.catalog_adapter import (
     OpenMetadataCatalogAdapter,
 )
@@ -48,21 +50,23 @@ from document_service.adapter.outbound.storage.download import PresignedUrlIssue
 from document_service.adapter.outbound.storage.s3_store import S3ObjectStoreAdapter
 from document_service.application.context import PolicySet, PortBundle
 from document_service.application.factory import UseCaseFactory
-from document_service.application.metadata_builder import CatalogMetadataBuilder
 from document_service.config import (
     AdapterProfile,
     IntentStoreKind,
+    LockKind,
     RelationshipStoreKind,
     Settings,
     get_settings,
 )
+from document_service.domain.metadata_builder import CatalogMetadataBuilder
 from document_service.domain.policy import (
     DedupPolicy,
     LifecyclePolicy,
     RelationshipPolicy,
     VersionPolicy,
 )
-from document_service.infrastructure.health import HealthProbe
+from document_service.domain.port import DocumentLockPort
+from document_service.infrastructure.health import HealthProbeMixin
 from document_service.infrastructure.resilience.executor import (
     ExecutorRegistry,
     ResilientCallExecutor,
@@ -90,8 +94,10 @@ class ServiceContainer(metaclass=SingletonMeta):
             self._policies,
             self._settings.storage.presign_ttl_seconds,
             self._builder,
+            self._settings.catalog.require_existing_collection,
         )
-        self._health = HealthCheckRegistry()
+        self._resolver = PrincipalResolver(self._settings.security)
+        self._health = HealthCheckRegistry(self._ports.policies.has_cached_download)
         self._gate = DegradedModeGate()
         self._metrics = MetricsRecorder()
         self._register_health()
@@ -100,6 +106,11 @@ class ServiceContainer(metaclass=SingletonMeta):
     def settings(self) -> Settings:
         """Cấu hình đang dùng."""
         return self._settings
+
+    @property
+    def resolver(self) -> PrincipalResolver:
+        """Bộ xác thực dùng chung cho request và health IdP."""
+        return self._resolver
 
     @property
     def ports(self) -> PortBundle:
@@ -182,14 +193,24 @@ class ServiceContainer(metaclass=SingletonMeta):
         self._executors.register("object_store", resilience.storage)
         self._executors.register("intent_store", resilience.intent)
         self._executors.register("relationship_store", resilience.relationship)
-        self._executors.register("idp", resilience.idp)
+        self._executors.register("document_lock", resilience.lock)
+        # Executor `idp` đã bị loại (X50, c4-09 mục 5.3): OidcTokenVerifier không
+        # nhận executor nào, nên khối `resilience.idp` cũ hoàn toàn vô tác dụng.
         self._executors.register("events", resilience.events)
+        self._executors.register("outbox", resilience.intent)
+        self._executors.register("audit", resilience.intent)
 
     def _build_ports(self) -> PortBundle:
         """Chọn bộ adapter theo profile."""
         if self._settings.app.profile is AdapterProfile.FAKE:
             return self._build_fake_ports()
         return self._build_real_ports()
+
+    def _build_locks(self) -> DocumentLockPort:
+        """Chọn khóa theo `lock.kind`, không theo `app.profile` (c4-09 mục 12)."""
+        if self._settings.lock.kind is LockKind.REDIS:
+            return RedisDocumentLock(self._settings.lock, self._executors.get("document_lock"))
+        return InMemoryDocumentLock(self._settings.lock)
 
     def _build_fake_ports(self) -> PortBundle:
         """Bộ adapter in-memory, chạy không cần hạ tầng."""
@@ -199,24 +220,38 @@ class ServiceContainer(metaclass=SingletonMeta):
             relationships=InMemoryRelationshipStore(),
             objects=InMemoryObjectStore(),
             intents=InMemoryIntentStore(),
-            policies=AllowAllPolicyDecision(),
+            policies=AllowAllPolicyDecision(catalog),
             events=InMemoryEventPublisher(),
             audit=InMemoryAuditLog(),
-            locks=InMemoryDocumentLock(),
+            locks=self._build_locks(),
         )
 
     def _build_real_ports(self) -> PortBundle:
         """Bộ adapter dùng OpenMetadata, Object Storage và registry sqlite."""
-        database = SqliteDatabase(self._settings.intent.sqlite_path)
-        client = OmHttpClient(self._settings.catalog, self._executors.get("catalog"))
+        # Dùng chung một SqliteDatabase khi hai path trỏ cùng file (mặc định);
+        # tách khi cấu hình cho relationship một path riêng (X35, c4-09 mục 14).
+        intent_path = self._settings.intent.sqlite_path
+        relationship_path = self._settings.relationship.sqlite_path
+        database = SqliteDatabase(intent_path)
+        relationship_database = (
+            database if relationship_path == intent_path else SqliteDatabase(relationship_path)
+        )
+        catalog_client = OmHttpClient(self._settings.catalog, self._executors.get("catalog"))
         catalog = OpenMetadataCatalogAdapter(
-            client, self._settings.catalog, self._executors.get("catalog")
+            catalog_client, self._settings.catalog, self._executors.get("catalog")
         )
         objects = S3ObjectStoreAdapter(self._settings.storage, self._executors.get("object_store"))
+        # Lineage store có client HTTP **riêng** dựng trên executor của chính nó
+        # (X22, c4-09 mục 5.3, luật L-EX1): mọi lời gọi của nó phải đi qua executor
+        # `relationship_store` để breaker và health indicator nói đúng về traffic
+        # thật, không trộn với executor `catalog`.
+        lineage_client = OmHttpClient(
+            self._settings.catalog, self._executors.get("relationship_store")
+        )
         relationships = (
-            OmLineageRelationshipStore(client, self._executors.get("relationship_store"))
+            OmLineageRelationshipStore(lineage_client, self._executors.get("relationship_store"))
             if self._settings.relationship.kind is RelationshipStoreKind.LINEAGE
-            else SqliteRelationshipRegistry(database, self._executors.get("relationship_store"))
+            else SqliteRelationshipRegistry(relationship_database, self._executors.get("relationship_store"))
         )
         intents = (
             S3ManifestIntentStore(
@@ -234,11 +269,9 @@ class ServiceContainer(metaclass=SingletonMeta):
             objects=objects,
             intents=intents,
             policies=CachingPolicyDecision(catalog, self._settings.security),
-            events=OutboxEventPublisher(
-                SqliteOutbox(database), self._executors.get("intent_store")
-            ),
-            audit=StructuredAuditLogger(database, self._executors.get("intent_store")),
-            locks=InMemoryDocumentLock(),
+            events=OutboxEventPublisher(SqliteOutbox(database), self._executors.get("outbox")),
+            audit=StructuredAuditLogger(database, self._executors.get("audit")),
+            locks=self._build_locks(),
         )
 
     def _build_policies(self) -> PolicySet:
@@ -259,10 +292,14 @@ class ServiceContainer(metaclass=SingletonMeta):
             self._ports.intents,
             self._ports.relationships,
             self._ports.locks,
+            self._ports.audit,
+            self._ports.events,
+            self._ports.policies,
         ):
-            if isinstance(candidate, HealthProbe):
+            if isinstance(candidate, HealthProbeMixin):
+                candidate.set_health_cache_ttl(self._settings.health.cache_ttl_seconds)
                 self._health.register(AdapterHealthIndicator(candidate))
-        self._health.register(IdpHealthIndicator(jwks_available=True))
+        self._health.register(IdpHealthIndicator(self._resolver.verifier.probe_jwks))
         self._health.register(
             ReconcileBacklogIndicator(
                 self._ports.intents,

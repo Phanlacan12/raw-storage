@@ -58,18 +58,20 @@ resilience:
     queue_capacity: 32
     max_retry_ratio: 0.1
 
-  idp:
-    connect_timeout_seconds: 1.0
-    read_timeout_seconds: 2.0
-    total_timeout_seconds: 3.0
-    max_attempts: 2
-    base_delay_seconds: 0.2
-    max_delay_seconds: 1.0
+  # Khóa phân tán C13: không retry khi đang giữ khóa (max_attempts=1). Timeout ngắn
+  # vì PING/Lua trên Redis cục bộ rất nhanh; breaker mở ngắn để sớm thăm dò lại.
+  lock:
+    connect_timeout_seconds: 0.3
+    read_timeout_seconds: 1.0
+    total_timeout_seconds: 1.0
+    max_attempts: 1
+    base_delay_seconds: 0.05
+    max_delay_seconds: 0.2
     failure_ratio_threshold: 0.5
     rolling_window_size: 20
-    open_duration_seconds: 10.0
-    max_concurrent_calls: 8
-    queue_capacity: 16
+    open_duration_seconds: 5.0
+    max_concurrent_calls: 32
+    queue_capacity: 64
     max_retry_ratio: 0.1
 
   # Downstream nhận sự kiện là **phụ thuộc riêng**, không dùng chung executor với
